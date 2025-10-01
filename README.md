@@ -43,3 +43,4 @@ Source: https://datavizcatalogue.com/
     - Circle Packing
     - Heatmap
     - Scatter plot
+    - Bubble chart

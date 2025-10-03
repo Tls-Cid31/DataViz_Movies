@@ -35,12 +35,28 @@ Attributs :
     - Filtering
 
 # Transformations à faire sur le dataset:
-    - 
+
 
 
 # Technique de visualisation:
 Source: https://datavizcatalogue.com/
     - Circle Packing
+        Au plus haut niveau, afficher le genre des films
+        Au second niveau , afficher les sociétés de productions.
+        Au plus bas, afficher les 10 plus gros films
+        
+        La taille des bulles varient en fonction de la popularité, de la note grace à un filtre
+        Le zoom dans une bulle permet d'afficher le contenu. 
+        La souris sur une bulle permet d'afficher un infobulle qui donnera les valeurs exacts correspondant à la popularité et/ou la note
+        Au niveau le plus bas (Film) afficher le résumé du film.
+
+        Filtre:
+            Filtre sur la Date
+            Filtre sur les genres
+            Filtre sur les productions
+            Filtre sur films
+            Filtre sur afficher X films
+
     - Heatmap
     - Scatter plot
     - Bubble chart

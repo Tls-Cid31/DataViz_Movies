@@ -6,7 +6,9 @@
 Dataset : [Top 10000 popular Movies TMDB](https://www.kaggle.com/datasets/ursmaheshj/top-10000-popular-movies-tmdb-05-2023/data)
 
 
-# Description du dataset:
+# Description du dataset :
+
+Contient des informations sur les 10000 films les plus populaires au moment de l'extraction (mai 2023).
 
 **Attributs :**
 
@@ -26,7 +28,7 @@ Dataset : [Top 10000 popular Movies TMDB](https://www.kaggle.com/datasets/ursmah
 - **tagline**: Short, memorable phrase associated with the movie, often used in promotional material.
     
 
-# Taches:
+# Taches :
     - Identify
     - Cluster
     - Order
@@ -34,30 +36,18 @@ Dataset : [Top 10000 popular Movies TMDB](https://www.kaggle.com/datasets/ursmah
     - Compare
     - Correlate
 
-# Overview:
+# Overview :
     - Zoom
     - Filtering
 
 
 # Transformations à faire sur le dataset :
 
-- Supprimer les colonnes inutiles pour nos visualisations : 
-    - *id*
-    - *original_language*
-    - *tagline*
-
-- Supprimer une ligne analysée avec des valeurs incohérentes, identifiée par : 
-    - *id* = 0
-
--  Filtrer sur la colonne *release_date* pour ne garder que les films déjà sortis au moment de l'extraction des données. Suppression si valeur : 
-    - vide
-    - \>= 2025-06-01
-
+- Supprimer les colonnes inutiles pour nos visualisations : *id*, *original_language*, *tagline*
+- Supprimer une ligne analysée avec des valeurs incohérentes, identifiée par *id* = 0
+-  Filtrer sur la colonne *release_date* pour ne garder que les films déjà sortis au moment de l'extraction des données. Suppression si la valeur est vide ou >= 2023-06-01
 - Extraire l'année de la colonne *release_date* car ce niveau de détail nous suffit
-
-- Ajouter la valeur "Non renseigné" pour les listes vides, colonnes concernées : 
-    - *genres*
-    - *production_companies*
+- Ajouter la valeur "Non renseigné" pour les listes vides, colonnes concernées : *genres*, *production_companies*
 
 
 # Techniques de visualisation :
@@ -93,4 +83,4 @@ Source : https://datavizcatalogue.com/
 - Filtres sur année, genre, entreprise de production, durée, popularité
 
 
-## Scatter plot / Bubble chart
+## Scatter plot ou Bubble chart

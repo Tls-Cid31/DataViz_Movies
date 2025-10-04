@@ -43,13 +43,13 @@ Contient des informations sur les 10000 films les plus populaires au moment de l
 
 
 # Transformations à faire sur le dataset :
-
+```
 - Supprimer les colonnes inutiles pour nos visualisations : *id*, *original_language*, *tagline*
 - Supprimer une ligne analysée avec des valeurs incohérentes, identifiée par *id* = 0
 -  Filtrer sur la colonne *release_date* pour ne garder que les films déjà sortis au moment de l'extraction des données. Suppression si la valeur est vide ou >= 2023-06-01
 - Extraire l'année de la colonne *release_date* car ce niveau de détail nous suffit
 - Ajouter la valeur "Non renseigné" pour les listes vides, colonnes concernées : *genres*, *production_companies*
-
+```
 
 # Techniques de visualisation :
 
@@ -75,22 +75,22 @@ Source : https://datavizcatalogue.com/
 
 
 ## Heatmap
-
+```
 - Croisement entre le genre et la date de sortie des films.
 - Couleur en fonction du nombre de films.
 - Une vue globale par décénnie et éventuellement les genres regroupés.
 - Possibilité de zoomer pour avoir plus de détail (par année au lieu de décennies)
 - Afficher le nombre de films, la popularité moyenne et la durée moyenne lors du survol de la souris.
 - Filtres sur année, genre, entreprise de production, durée, popularité
-
+```
 
 ## Scatter plot ou Bubble chart
-
-
+```
 Cette technique permet d’explorer la relation entre le budget et le revenu des films tout en révélant leurs différences de genre, de popularité et de performance.
 
-Axe X (horizontal) → mettre le budget pour voir combien un film a coûté.
-Axe Y (vertical) → mettre le revenue pour mesurer combien il a rapporté.
+- Axe X (horizontal) → mettre le budget pour voir combien un film a coûté.
+- Axe Y (vertical) → mettre le revenue pour mesurer combien il a rapporté.
 Couleur des bulles → utiliser genres pour distinguer les catégories de films.
 Taille des bulles → représenter la popularity afin de montrer l’engagement du public.
 Info au survol  → afficher title, release_date, vote_average, runtime et overview pour identifier un film.
+```

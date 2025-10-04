@@ -90,7 +90,7 @@ Cette technique permet d’explorer la relation entre le budget et le revenu des
 
 - Axe X (horizontal) → mettre le budget pour voir combien un film a coûté.
 - Axe Y (vertical) → mettre le revenue pour mesurer combien il a rapporté.
-Couleur des bulles → utiliser genres pour distinguer les catégories de films.
-Taille des bulles → représenter la popularity afin de montrer l’engagement du public.
-Info au survol  → afficher title, release_date, vote_average, runtime et overview pour identifier un film.
+- Couleur des bulles → utiliser genres pour distinguer les catégories de films.
+- Taille des bulles → représenter la popularity afin de montrer l’engagement du public.
+- Info au survol  → afficher title, release_date, vote_average, runtime et overview pour identifier un film.
 ```

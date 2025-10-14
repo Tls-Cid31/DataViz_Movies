@@ -40,7 +40,6 @@ Contient des informations sur les 10000 films les plus populaires au moment de l
 # Overview :
     - Zoom
     - Filtering
-    - Tooltip
 
 
 # Transformations à faire sur le dataset :

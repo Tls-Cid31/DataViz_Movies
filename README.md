@@ -43,13 +43,14 @@ Contient des informations sur les 10000 films les plus populaires au moment de l
 
 
 # Transformations à faire sur le dataset :
-```
-- Supprimer les colonnes inutiles pour nos visualisations : *id*, *original_language*, *tagline*
+
 - Supprimer une ligne analysée avec des valeurs incohérentes, identifiée par *id* = 0
 -  Filtrer sur la colonne *release_date* pour ne garder que les films déjà sortis au moment de l'extraction des données. Suppression si la valeur est vide ou >= 2023-06-01
 - Extraire l'année de la colonne *release_date* car ce niveau de détail nous suffit
 - Ajouter la valeur "Non renseigné" pour les listes vides, colonnes concernées : *genres*, *production_companies*
-```
+- Transformer les listes de *genres* et *production_companies*
+- Supprimer les colonnes inutiles pour nos visualisations : *id*, *original_language*, *tagline*
+
 
 # Techniques de visualisation :
 

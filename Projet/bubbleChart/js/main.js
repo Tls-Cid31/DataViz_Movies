@@ -19,6 +19,7 @@ const state = {
    UTILITAIRES
    ========================================================= */
 
+
 function numOrNull(v) {
   const n = +v;
   return Number.isFinite(n) ? n : null;
@@ -130,7 +131,7 @@ function getFilterValues() {
 
   const sizeBy = sizeByEl ? sizeByEl.value : "popularity";
 
-  // ⚠️ Désormais on lit les genres cochés DANS LA LÉGENDE
+  // Désormais on lit les genres cochés DANS LA LÉGENDE
   const genreChecks = document.querySelectorAll(
     "#legend-genres .genre-check:checked"
   );
@@ -361,13 +362,13 @@ function renderBaseBubbleChart(movies, filters) {
     .axisBottom(x)
     .ticks(computeXTicks())
     .tickFormat(axisMoney)
-    .tickPadding(6);
+    .tickPadding(-8);
 
   const yAxis = d3
     .axisLeft(y)
     .ticks(computeYTicks())
     .tickFormat(axisMoney)
-    .tickPadding(6);
+    .tickPadding(-10);
 
   const xAxisG = axesG
     .append("g")

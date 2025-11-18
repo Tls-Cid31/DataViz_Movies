@@ -111,6 +111,15 @@ body {
   gap: 12px;
 }
 
+#plot-area .tick text {
+  font-size: 10px; /* Plus petit = moins de chevauchement */
+}
+
+#plot-area .domain,
+#plot-area .tick line {
+  stroke: #4b5563;
+}
+
 /* CARDS */
 
 .card {

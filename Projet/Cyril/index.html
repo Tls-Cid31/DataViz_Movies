@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TP UX - Movies Visualization</title>
+    <link rel="stylesheet" href="CSS/style.css">
+    <meta name="description" content="Exploration interactive des films par genres et sociétés de production (Circle Packing + Pie Chart)">
+    <meta name="color-scheme" content="light dark">
+    <link rel="preconnect" href="https://d3js.org">
+    <link rel="dns-prefetch" href="https://d3js.org">
+    <link rel="icon" href="data:,">
+    <script src="https://d3js.org/d3.v7.min.js" defer></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v3.min.js" defer></script>
+    <script src="JS/script.js" defer></script>
+    <style>
+      /* Fallback minimal if CSS fails to load */
+      #pack, #pie { min-height: 300px; max-height: 700px; }
+    </style>
+    <noscript>Activez JavaScript pour voir les visualisations.</noscript>
+    <meta http-equiv="Permissions-Policy" content="interest-cohort=()">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+</head>
+<body>
+    <header>
+        <h1>Visualisation des Données de Films</h1>
+        <p id="filmCount">Analyse de <span id="filteredCount">0</span> / <span id="totalCount">9757</span> films</p>
+    </header>
+
+    <main>
+        <section id="controls">
+            <div class="control-group">
+                <label>Filtrer par année :</label>
+                <div class="range-slider-container">
+                    <div class="range-track"></div>
+                    <div class="range-fill" id="rangeFill"></div>
+                    <input type="range" id="yearFilterMin" min="1900" max="2023" value="1900" class="range-slider range-min">
+                    <input type="range" id="yearFilterMax" min="1900" max="2023" value="2023" class="range-slider range-max">
+                </div>
+                <div class="range-display">
+                    <span id="yearDisplayMin">1900</span>
+                    <span> - </span>
+                    <span id="yearDisplayMax">2023</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Vue :</label>
+                <label class="radio"><input type="radio" name="mode" value="genre" checked> Par genre</label>
+                <label class="radio"><input type="radio" name="mode" value="production"> Par production</label>
+            </div>
+
+            <div class="control-group">
+                <label>Taille des bulles :</label>
+                <label class="radio"><input type="radio" name="sizeMode" value="popularity" checked> Popularité</label>
+                <label class="radio"><input type="radio" name="sizeMode" value="budget"> Budget</label>
+                <label class="radio"><input type="radio" name="sizeMode" value="revenue"> Revenus</label>
+                <label class="radio"><input type="radio" name="sizeMode" value="vote_average"> Notes</label>
+            </div>
+        </section>
+
+        <section id="visualizations">
+            <div class="viz-container">
+                <h2>Vue Circulaire (Circle Packing)</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <p class="hint" style="margin: 0;">Cliquez sur une grande bulle pour zoomer dans ses films. Cliquez au centre pour revenir.</p>
+                    <div class="strict-toggle-container" style="margin: 0;">
+                        <span class="toggle-label">Afficher les titres</span>
+                        <label class="switch">
+                            <input type="checkbox" id="showTitles">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="pack-wrapper">
+                    <div id="pack"></div>
+                    <div class="zoom-controls" aria-label="Contrôles de zoom">
+                        <button id="zoomIn" type="button" title="Zoom +" aria-label="Zoom plus">+</button>
+                        <input id="zoomSlider" type="range" min="0.5" max="3" step="0.1" value="1" aria-label="Niveau de zoom" orient="vertical">
+                        <button id="zoomOut" type="button" title="Zoom -" aria-label="Zoom moins">−</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="viz-container filters-container" id="filtersPanel">
+                <h2>Filtres</h2>
+                <div class="filters">
+                    <div class="filter-block">
+                        <div class="strict-toggle-container">
+                            <span class="toggle-label">Genre: Strict</span>
+                            <span class="toggle-state">OFF</span>
+                            <label class="switch">
+                                <input type="checkbox" id="strictGenre">
+                                <span class="slider"></span>
+                            </label>
+                            <span class="toggle-state">ON</span>
+                        </div>
+                        <!-- <label>Genres (multi) :</label> -->
+                        <div class="search-container">
+                            <input type="text" id="genreSearch" class="filter-search" placeholder="Rechercher un genre...">
+                            <button type="button" class="search-clear" id="genreSearchClear" title="Effacer la recherche">×</button>
+                        </div>
+                        <div id="genreList" class="multi-list" tabindex="0"></div>
+                    </div>
+                    <div class="filter-block">
+                        <div class="strict-toggle-container">
+                            <span class="toggle-label">Société de production:  Strict</span>
+                            <span class="toggle-state">OFF</span>
+                            <label class="switch">
+                                <input type="checkbox" id="strictProd">
+                                <span class="slider"></span>
+                            </label>
+                            <span class="toggle-state">ON</span>
+                        </div>
+                        <!-- <label>Sociétés de production (multi) :</label> -->
+                        <div class="search-container">
+                            <input type="text" id="prodSearch" class="filter-search" placeholder="Rechercher une société...">
+                            <button type="button" class="search-clear" id="prodSearchClear" title="Effacer la recherche">×</button>
+                        </div>
+                        <div id="prodList" class="multi-list" tabindex="0"></div>
+                    </div>
+                </div>
+                <div class="filter-actions">
+                    <button id="filtersUndo" type="button">↩ Retour</button>
+                    <button id="filtersClear" type="button">✖ Annuler les filtres</button>
+                </div>
+            </div>
+
+            <div class="viz-container full-span">
+                <h2>Données des Films</h2>
+                <div id="dataTable"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Projet UI : Movies - 2025</p>
+    </footer>
+</body>
+</html>

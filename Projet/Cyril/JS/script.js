@@ -32,8 +32,10 @@ let selectedCompanies = new Set();
 let selectedTitles = new Set(); // Titres sélectionnés depuis le tableau
 let excludedGenres = new Set(); // Genres exclus (clic droit)
 let excludedCompanies = new Set(); // Productions exclues (clic droit)
+let excludedTitles = new Set(); // Films exclus (clic droit dans le filtre films)
 let genreOptions = [];
 let prodOptions = [];
+let filmOptions = []; // Liste des titres pour le filtre films
 let filterHistory = []; // historique des sélections pour retour
 let redoHistory = []; // historique pour avancer
 // Zoom UI state
@@ -350,12 +352,14 @@ function setupEventListeners() {
             redoHistory.push({
                 genres: Array.from(selectedGenres),
                 companies: Array.from(selectedCompanies),
+                titles: Array.from(selectedTitles),
                 strictGenre,
                 strictProd
             });
             const prev = filterHistory.pop();
             selectedGenres = new Set(prev.genres);
             selectedCompanies = new Set(prev.companies);
+            selectedTitles = new Set(prev.titles || []);
             strictGenre = !!prev.strictGenre;
             strictProd = !!prev.strictProd;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = strictGenre;
@@ -372,12 +376,14 @@ function setupEventListeners() {
             filterHistory.push({
                 genres: Array.from(selectedGenres),
                 companies: Array.from(selectedCompanies),
+                titles: Array.from(selectedTitles),
                 strictGenre,
                 strictProd
             });
             const next = redoHistory.pop();
             selectedGenres = new Set(next.genres);
             selectedCompanies = new Set(next.companies);
+            selectedTitles = new Set(next.titles || []);
             strictGenre = !!next.strictGenre;
             strictProd = !!next.strictProd;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = strictGenre;
@@ -392,6 +398,10 @@ function setupEventListeners() {
             pushFiltersHistory();
             selectedGenres.clear();
             selectedCompanies.clear();
+            selectedTitles.clear();
+            excludedGenres.clear();
+            excludedCompanies.clear();
+            excludedTitles.clear();
             strictGenre = false;
             strictProd = false;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = false;
@@ -835,9 +845,9 @@ function sortTableData() {
 function getUniqueValuesForColumn(filterKey) {
     const values = new Set();
     
-    baseTableData.forEach(film => {
+    moviesData.forEach(film => {
         if (filterKey === 'title') {
-            values.add(film.name);
+            values.add(film.title);
         } else if (filterKey === 'year') {
             if (film.year) values.add(String(film.year));
         } else if (filterKey === 'note') {
@@ -967,11 +977,14 @@ function renderTable() {
             }
             
             if (d.filterKey && isFilterActive) {
+                // Déterminer si l'overlay doit s'ouvrir vers le haut (1 ligne) ou vers le bas
+                const shouldOpenUpward = currentTableData.length <= config.itemsPerPage && currentTableData.length <= 1;
+                
                 // Show filter panel overlay
                 const filterPanel = th.append('div')
                     .attr('class', 'filter-panel-overlay')
                     .style('position', 'absolute')
-                    .style('top', '100%')
+                    .style(shouldOpenUpward ? 'bottom' : 'top', '100%')
                     .style('left', '0')
                     .style('min-width', '250px')
                     .style('max-width', '400px')
@@ -980,7 +993,7 @@ function renderTable() {
                     .style('border-radius', '8px')
                     .style('box-shadow', '0 4px 12px rgba(0,0,0,0.15)')
                     .style('z-index', '1000')
-                    .style('margin-top', '4px')
+                    .style(shouldOpenUpward ? 'margin-bottom' : 'margin-top', '4px')
                     .style('padding', '12px')
                     .on('click', function(event) {
                         event.stopPropagation(); // Empêcher la fermeture au clic dans l'overlay
@@ -1047,29 +1060,79 @@ function renderTable() {
                         ? uniqueValues.filter(v => v.toLowerCase().includes(searchTerm.toLowerCase()))
                         : uniqueValues;
                     
-                    // Separate selected and unselected values
-                    const selected = filtered.filter(v => tableFilters[d.filterKey].has(v));
-                    const unselected = filtered.filter(v => !tableFilters[d.filterKey].has(v));
+                    // Déterminer les sets d'exclusion et de sélection selon le type
+                    let selectedSet, excludedSet;
+                    if (d.filterKey === 'genres') {
+                        selectedSet = selectedGenres;
+                        excludedSet = excludedGenres;
+                    } else if (d.filterKey === 'productions') {
+                        selectedSet = selectedCompanies;
+                        excludedSet = excludedCompanies;
+                    } else if (d.filterKey === 'title') {
+                        selectedSet = selectedTitles;
+                        excludedSet = excludedTitles;
+                    } else {
+                        selectedSet = new Set();
+                        excludedSet = new Set();
+                    }
                     
-                    // Combine: selected first, then unselected
-                    const ordered = [...selected, ...unselected];
+                    // Calculer les items disponibles
+                    let availableItems = new Set();
+                    if (d.filterKey === 'genres') {
+                        availableItems = getAvailableItems('genre');
+                    } else if (d.filterKey === 'productions') {
+                        availableItems = getAvailableItems('prod');
+                    } else if (d.filterKey === 'title') {
+                        availableItems = getAvailableItems('film');
+                    }
+                    
+                    // Séparer par état: sélectionné, exclu, disponible, indisponible
+                    const selected = filtered.filter(v => selectedSet.has(v));
+                    const excluded = filtered.filter(v => !selectedSet.has(v) && excludedSet.has(v));
+                    const available = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && (availableItems.size === 0 || availableItems.has(v)));
+                    const unavailable = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && availableItems.size > 0 && !availableItems.has(v));
+                    
+                    // Ordonner: sélectionné, disponible, indisponible, exclu
+                    const ordered = [...selected, ...available, ...unavailable, ...excluded];
                     
                     ordered.slice(0, 100).forEach(value => {
-                        const isSelected = tableFilters[d.filterKey].has(value);
+                        const isSelected = selectedSet.has(value);
+                        const isExcluded = excludedSet.has(value);
+                        const isUnavailable = !isSelected && !isExcluded && availableItems.size > 0 && !availableItems.has(value);
+                        let bgColor = 'white';
+                        let textColor = '#333';
+                        let opacity = 1;
+                        
+                        if (isSelected) {
+                            bgColor = '#d4edda';
+                            textColor = '#155724';
+                        } else if (isExcluded) {
+                            bgColor = '#f8d7da';
+                            textColor = '#721c24';
+                        } else if (isUnavailable) {
+                            bgColor = '#f5f5f5';
+                            textColor = '#999';
+                            opacity = 0.6;
+                        }
+                        
                         const item = valuesPanel.append('div')
                             .style('padding', '8px 10px')
-                            .style('cursor', 'pointer')
-                            .style('background', isSelected ? '#d4edda' : 'white')
+                            .style('cursor', isUnavailable ? 'not-allowed' : 'pointer')
+                            .style('background', bgColor)
+                            .style('color', textColor)
+                            .style('opacity', opacity)
                             .style('border-bottom', '1px solid #eee')
                             .style('display', 'flex')
                             .style('align-items', 'center')
                             .style('gap', '8px')
                             .style('transition', 'background 0.2s')
                             .on('mouseenter', function() {
-                                if (!isSelected) d3.select(this).style('background', '#f5f5f5');
+                                if (!isSelected && !isExcluded && !isUnavailable) {
+                                    d3.select(this).style('background', '#f0f0f0');
+                                }
                             })
                             .on('mouseleave', function() {
-                                if (!isSelected) d3.select(this).style('background', 'white');
+                                d3.select(this).style('background', bgColor);
                             })
                             .on('click', function(event) {
                                 event.stopPropagation();
@@ -1077,6 +1140,14 @@ function renderTable() {
                                     tableFilters[d.filterKey].delete(value);
                                 } else {
                                     tableFilters[d.filterKey].add(value);
+                                }
+                                // Synchroniser avec les filtres principaux
+                                if (d.filterKey === 'genres') {
+                                    if (tableFilters.genres.has(value)) selectedGenres.add(value); else selectedGenres.delete(value);
+                                } else if (d.filterKey === 'productions') {
+                                    if (tableFilters.productions.has(value)) selectedCompanies.add(value); else selectedCompanies.delete(value);
+                                } else if (d.filterKey === 'title') {
+                                    if (tableFilters.title.has(value)) selectedTitles.add(value); else selectedTitles.delete(value);
                                 }
                                 // Update data and re-render values list only
                                 currentTableData = baseTableData.filter(film => {
@@ -1097,8 +1168,31 @@ function renderTable() {
                                 // Re-render the values to update checkboxes
                                 const currentSearch = searchInput.node().value;
                                 renderValues(currentSearch);
+                                
+                                // Update the filter badge in the header
+                                const currentHeader = d3.select(`#dataTable thead th:nth-child(${headerData.findIndex(h => h.filterKey === d.filterKey) + 1})`);
+                                const filterIcon = currentHeader.select('.filter-icon');
+                                
+                                // Update has-filter class
+                                const hasFilter = tableFilters[d.filterKey].size > 0;
+                                filterIcon.classed('has-filter', hasFilter);
+                                
+                                // Update or remove badge
+                                filterIcon.select('.filter-badge').remove();
+                                if (hasFilter) {
+                                    filterIcon.append('span')
+                                        .attr('class', 'filter-badge')
+                                        .text(tableFilters[d.filterKey].size);
+                                }
+                                
                                 // Update table body without full re-render to preserve overlay
                                 updateTableBody();
+                                // Mettre à jour la visualisation si genres/productions/titres changent
+                                if (d.filterKey === 'genres' || d.filterKey === 'productions' || d.filterKey === 'title') {
+                                    updateFilteredData();
+                                    updateVisualization();
+                                    applySelectionsToUI();
+                                }
                             });
                         
                         item.append('input')
@@ -1576,6 +1670,7 @@ function pushFiltersHistory() {
     filterHistory.push({
         genres: Array.from(selectedGenres),
         companies: Array.from(selectedCompanies),
+        titles: Array.from(selectedTitles),
         strictGenre,
         strictProd
     });
@@ -1586,6 +1681,9 @@ function pushFiltersHistory() {
 function applySelectionsToUI() {
     renderMultiList('genreList', genreOptions, selectedGenres, 'genre');
     renderMultiList('prodList', prodOptions, selectedCompanies, 'prod');
+    if (filmOptions && filmOptions.length) {
+        renderMultiList('filmList', filmOptions, selectedTitles, 'film');
+    }
     // Re-apply search filters after rendering
     reapplySearchFilters();
 }
@@ -1594,12 +1692,16 @@ function applySelectionsToUI() {
 function reapplySearchFilters() {
     const genreSearch = document.getElementById('genreSearch');
     const prodSearch = document.getElementById('prodSearch');
+    const filmSearch = document.getElementById('filmSearch');
     
     if (genreSearch && genreSearch.value) {
         filterListItems('genreList', genreSearch.value.toLowerCase().trim());
     }
     if (prodSearch && prodSearch.value) {
         filterListItems('prodList', prodSearch.value.toLowerCase().trim());
+    }
+    if (filmSearch && filmSearch.value) {
+        filterListItems('filmList', filmSearch.value.toLowerCase().trim());
     }
 }
 
@@ -1610,7 +1712,11 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
     container.innerHTML = '';
 
     // Déterminer quel Set d'exclusion utiliser
-    const excludedSet = kind === 'genre' ? excludedGenres : excludedCompanies;
+    let excludedSet;
+    if (kind === 'genre') excludedSet = excludedGenres;
+    else if (kind === 'prod') excludedSet = excludedCompanies;
+    else if (kind === 'film') excludedSet = excludedTitles;
+    else excludedSet = new Set();
 
     // Calculate available items based on current filters
     const availableItems = getAvailableItems(kind);
@@ -1734,17 +1840,15 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
             }
         });
 
-        // Right click: exclure/inclure
+        // Right click: exclure/inclure (maintenant aussi pour films)
         div.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             pushFiltersHistory();
             if (excludedSet.has(name)) {
-                // Retirer de l'exclusion
                 excludedSet.delete(name);
             } else {
-                // Ajouter à l'exclusion (même si sélectionné)
                 excludedSet.add(name);
-                selectedSet.delete(name); // Retirer de la sélection si présent
+                selectedSet.delete(name);
             }
             applySelectionsToUI();
             updateFilteredData();
@@ -1774,9 +1878,29 @@ function getAvailableItems(kind) {
         const gs = parseArrayField(movie.genres);
         const ps = parseArrayField(movie.production_companies);
         
-        // Apply opposite filter (genre filter when checking productions, vice versa)
-        if (kind === 'genre') {
-            // Check if movie matches production filters
+        if (kind === 'film') {
+            // Le film est disponible si il satisfait déjà les autres filtres actifs
+            // Vérifier genres
+            if (selectedGenres.size > 0) {
+                if (strictGenre) {
+                    const requireAllSelected = Array.from(selectedGenres).every(x => gs.includes(x));
+                    if (!requireAllSelected) continue;
+                } else if (!gs.some(x => selectedGenres.has(x))) {
+                    continue;
+                }
+            }
+            // Vérifier productions
+            if (selectedCompanies.size > 0) {
+                if (strictProd) {
+                    const requireAllSelectedP = Array.from(selectedCompanies).every(x => ps.includes(x));
+                    if (!requireAllSelectedP) continue;
+                } else if (!ps.some(x => selectedCompanies.has(x))) {
+                    continue;
+                }
+            }
+            availableSet.add(movie.title);
+        } else if (kind === 'genre') {
+            // Check if movie matches production and title filters
             if (selectedCompanies.size > 0) {
                 if (strictProd) {
                     const requireAllSelectedP = Array.from(selectedCompanies).every(x => ps.includes(x));
@@ -1785,10 +1909,14 @@ function getAvailableItems(kind) {
                     if (!ps.some(x => selectedCompanies.has(x))) continue;
                 }
             }
+            // Vérifier les films sélectionnés
+            if (selectedTitles.size > 0 && !selectedTitles.has(movie.title)) continue;
+            // Exclure les films exclus
+            if (excludedTitles.has(movie.title)) continue;
             // Add all genres from this movie
             gs.forEach(g => availableSet.add(g));
-        } else {
-            // Check if movie matches genre filters
+        } else { // productions
+            // Check if movie matches genre and title filters
             if (selectedGenres.size > 0) {
                 if (strictGenre) {
                     const requireAllSelected = Array.from(selectedGenres).every(x => gs.includes(x));
@@ -1797,6 +1925,10 @@ function getAvailableItems(kind) {
                     if (!gs.some(x => selectedGenres.has(x))) continue;
                 }
             }
+            // Vérifier les films sélectionnés
+            if (selectedTitles.size > 0 && !selectedTitles.has(movie.title)) continue;
+            // Exclure les films exclus
+            if (excludedTitles.has(movie.title)) continue;
             // Add all productions from this movie
             ps.forEach(p => availableSet.add(p));
         }
@@ -1826,6 +1958,8 @@ function updateFilteredData() {
             if (selectedTitles.size > 0) {
                 if (!selectedTitles.has(d.title)) return false;
             }
+            // Exclure les titres exclus
+            if (excludedTitles.size > 0 && excludedTitles.has(d.title)) return false;
             
             const gs = parseArrayField(d.genres);
             const ps = parseArrayField(d.production_companies);
@@ -1864,13 +1998,18 @@ function updateFilteredData() {
             }
             return true;
         });
+    // Synchroniser les filtres de tableau avec les sélections principales
+    tableFilters.title = new Set(selectedTitles);
+    tableFilters.genres = new Set(selectedGenres);
+    tableFilters.productions = new Set(selectedCompanies);
 }
 
 // Populate filters from data
 function populateFilters() {
     const genreList = document.getElementById('genreList');
     const prodList = document.getElementById('prodList');
-    if (!genreList || !prodList) return;
+    const filmList = document.getElementById('filmList');
+    if (!genreList || !prodList || !filmList) return;
 
     const genreFreq = new Map();
     const prodFreq = new Map();
@@ -1882,6 +2021,7 @@ function populateFilters() {
         for (const p of parseArrayField(d.production_companies)) {
             prodFreq.set(p, (prodFreq.get(p) || 0) + 1);
         }
+        // Collect titles (simple frequency not needed for now)
     }
 
     genreOptions = Array.from(genreFreq, ([name, count]) => ({ name, count }))
@@ -1894,6 +2034,11 @@ function populateFilters() {
 
     renderMultiList('genreList', genreOptions, selectedGenres, 'genre');
     renderMultiList('prodList', prodOptions, selectedCompanies, 'prod');
+    // Film options: tous les titres triés (peut être lourd, optimisation future possible)
+    if (filmOptions.length === 0) {
+        filmOptions = moviesData.map(d => d.title).filter(t => !!t).sort((a,b)=>a.localeCompare(b,'fr'));
+    }
+    renderMultiList('filmList', filmOptions, selectedTitles, 'film');
 
     // Setup search listeners
     setupSearchListeners();
@@ -1903,8 +2048,10 @@ function populateFilters() {
 function setupSearchListeners() {
     const genreSearch = document.getElementById('genreSearch');
     const prodSearch = document.getElementById('prodSearch');
+    const filmSearch = document.getElementById('filmSearch');
     const genreSearchClear = document.getElementById('genreSearchClear');
     const prodSearchClear = document.getElementById('prodSearchClear');
+    const filmSearchClear = document.getElementById('filmSearchClear');
 
     if (genreSearch) {
         genreSearch.addEventListener('input', (e) => {
@@ -1928,6 +2075,16 @@ function setupSearchListeners() {
         });
     }
 
+    if (filmSearch) {
+        filmSearch.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            filterListItems('filmList', query);
+            if (filmSearchClear) {
+                filmSearchClear.classList.toggle('visible', e.target.value.length > 0);
+            }
+        });
+    }
+
     if (genreSearchClear) {
         genreSearchClear.addEventListener('click', () => {
             if (genreSearch) {
@@ -1946,6 +2103,17 @@ function setupSearchListeners() {
                 filterListItems('prodList', '');
                 prodSearchClear.classList.remove('visible');
                 prodSearch.focus();
+            }
+        });
+    }
+
+    if (filmSearchClear) {
+        filmSearchClear.addEventListener('click', () => {
+            if (filmSearch) {
+                filmSearch.value = '';
+                filterListItems('filmList', '');
+                filmSearchClear.classList.remove('visible');
+                filmSearch.focus();
             }
         });
     }

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bubble Chart – Budget vs Revenue (TMDB)</title>
+
+  <!-- Styles du module -->
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- D3 -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <!-- HEADER : titre + filtres -->
+  <header class="app-header">
+    <div class="title-block">
+      <h1>Analyse Budget–Revenus des Films (TMDB) – Bubble Chart</h1>
+      <p>Chaque bulle = un film. Couleur = genre, taille = popularité ou note.</p>
+    </div>
+
+    <div class="filters-row">
+      <!-- Filtre année -->
+      <div class="filter-group">
+        <label for="year-min">Années :</label>
+        <input type="number" id="year-min" placeholder="Min" />
+        <span>—</span>
+        <input type="number" id="year-max" placeholder="Max" />
+      </div>
+
+      <!-- Filtre titre -->
+      <div class="filter-group">
+        <label for="title-filter">Titre :</label>
+        <input type="text" id="title-filter" placeholder="Rechercher un film..." />
+      </div>
+
+      <!-- Filtre productions -->
+      <div class="filter-group">
+        <label for="company-filter">Production :</label>
+        <input type="text" id="company-filter" placeholder="Nom d'une société..." />
+      </div>
+
+      <!-- Taille : popularity / note -->
+      <div class="filter-group">
+        <span>Taille :</span>
+        <label><input type="radio" name="sizeBy" value="popularity" checked /> Popularité</label>
+        <label><input type="radio" name="sizeBy" value="vote_average" /> Note</label>
+      </div>
+
+      <!-- N premiers -->
+      <div class="filter-group">
+        <label for="top-n">Top :</label>
+        <select id="top-n">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+          <option value="all" selected>All</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Ligne de filtres genres -->
+    <div class="filters-row secondary">
+      <div class="filter-group">
+        <span>Genres</span>
+        <div id="genres-filters" class="pill-container">
+          <span class="muted">Les genres seront affichés ici après chargement des données.</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTENU PRINCIPAL -->
+  <main class="app-main">
+    <!-- Ligne 1 : Scatter à gauche, légende à droite -->
+    <section class="top-row">
+      <div id="plot-wrap" class="card">
+        <h2 class="card-title"> Budget vs Revenue </h2>
+        <div id="plot-area">
+          <!-- Le SVG D3 ira ici -->
+        </div>
+      </div>
+
+      <aside id="legend-wrap" class="card legend-card">
+        <h2 class="card-title">Genres / Couleurs</h2>
+        <div id="legend-genres">
+          <p class="muted">La légende des genres.</p>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Ligne 2 : panneau des films sans budget/revenue -->
+    <section id="missing-wrap" class="card missing-panel">
+      <!-- Header du panneau B -->
+      <header class="missing-panel-header">
+        <h2 class="card-title"> Films sans budget / revenue</h2>
+      </header>
+      
+      <!-- Corps : zone scrollable avec liste -->
+      <div id="missing-area" class="missing-panel-body">
+        <!-- Contenu généré par le JS -->
+      </div>
+      
+      <!-- Footer : pagination -->
+      <footer class="missing-panel-footer">
+        <!-- Les contrôles de pagination iront ici (générés par JS) -->
+      </footer>
+    </section>
+  </main>
+
+  <!-- Tooltip global -->
+  <div id="tooltip" class="tooltip" style="opacity:0;"></div>
+
+  <!-- Script principal du module -->
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HeatMap</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://d3js.org/d3.v6.js"></script>
+</head>
+
+<body>
+
+<!-- ======================  FILTERS  ====================== -->
+
+<div id="filters">
+
+    <div class="filter-block">
+        <label for="color-by">Couleur selon :</label>
+        <select id="color-by">
+            <option value="ratioPeriod">Ratio par période</option>
+            <option value="ratioGenre">Ratio par genre</option>
+        </select>
+    </div>
+
+    <!-- Décennie -->
+    <div class="filter-block">
+        <label for="filter-decade">Décennie</label>
+        <select id="filter-decade"></select>
+    </div>
+
+    <!-- Société de production -->
+    <div class="filter-block">
+        <label for="filter-company">Société de production</label>
+        <input list="company-list" id="filter-company" placeholder="Rechercher">
+        <datalist id="company-list"></datalist>
+    </div>
+
+    <!-- Popularité -->
+    <div class="filter-block">
+        <label for="filter-popularity">Popularité (min):
+            <span id="pop-value">0+</span>
+        </label>
+        <input type="range" id="filter-popularity" min="0" max="100" step="1" value="0">
+    </div>
+
+    <!-- Note moyenne -->
+    <div class="filter-block">
+        <label for="filter-vote">Note moyenne (min):
+            <span id="vote-value">0+</span>
+        </label>
+        <input type="range" id="filter-vote" min="0" max="10" step="0.1" value="0">
+    </div>
+
+    <!-- Durée -->
+    <div class="filter-block">
+        <label for="filter-runtime">Durée (min):
+            <span id="runtime-value">0+</span>
+        </label>
+        <input type="range" id="filter-runtime" min="0" max="300" step="10" value="0">
+    </div>
+
+</div>
+
+<!-- ======================  CONTENT  ====================== -->
+
+<h2>Panorama des films en fonction du genre et de l'année de sortie</h2>
+
+<main id="content">
+
+    <div id="heatmap-legend"></div>
+
+    <!-- Heatmap -->
+    <section id="heatmap-section">
+        <h3 id="heatmap-title">Répartition des films</h3>
+        <div id="heatmap"></div>
+    </section>
+
+    <!-- Top Movies -->
+    <section id="list-section">
+        <h3 id="list-title">Top 10</h3>
+        <div id="movies-table-container"></div>
+    </section>
+
+</main>
+
+<script src="index.js"></script>
+</body>
+</html>

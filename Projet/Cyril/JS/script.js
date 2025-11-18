@@ -29,6 +29,9 @@ let tableSortOrder = 'desc'; // 'asc' ou 'desc' (années récentes en premier)
 let currentPage = 1;       // page actuelle de la pagination
 let selectedGenres = new Set();
 let selectedCompanies = new Set();
+let selectedTitles = new Set(); // Titres sélectionnés depuis le tableau
+let excludedGenres = new Set(); // Genres exclus (clic droit)
+let excludedCompanies = new Set(); // Productions exclues (clic droit)
 let genreOptions = [];
 let prodOptions = [];
 let filterHistory = []; // historique des sélections pour retour
@@ -44,10 +47,31 @@ let strictProd = false;
 let showTitles = false; // Affichage des titres dans le circle packing
 
 // Initialisation au chargement de la page
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    // DOM déjà chargé
+    init();
+}
 
 async function init() {
     try {
+        // Vérifier que D3 est chargé
+        if (typeof d3 === 'undefined') {
+            console.error('❌ D3.js n\'est pas chargé!');
+            // Attendre un peu et réessayer
+            setTimeout(() => {
+                if (typeof d3 !== 'undefined') {
+                    console.log('✅ D3.js chargé après attente, version:', d3.version);
+                    init();
+                } else {
+                    showError('Erreur: Bibliothèque D3.js non chargée');
+                }
+            }, 500);
+            return;
+        }
+        console.log('✅ D3.js version:', d3.version);
+        
         showLoading();
         await loadData();
         populateFilters();
@@ -77,8 +101,6 @@ async function loadData() {
             runtime: +d.runtime,
             year: +d.year
         }));
-
-        console.log(`${moviesData.length} films chargés`);
         
         // Update total count in header
         const uniqueTotalFilms = new Set(moviesData.map(d => d.title || d.original_title)).size;
@@ -145,7 +167,8 @@ function buildHierarchy(mode, data, sizeMode) {
     } else if (sizeMode === 'revenue') {
       sizeValue = +d.revenue;
     } else if (sizeMode === 'vote_average') {
-      sizeValue = +d.vote_average;
+      // Multiplier par 100 pour donner plus de poids aux notes (0-10 -> 0-1000)
+      sizeValue = (+d.vote_average) * 100;
     } else {
       sizeValue = +d.popularity;
     }
@@ -256,6 +279,49 @@ function setupEventListeners() {
     
     // Initial fill update
     updateRangeFill();
+    
+    // Click sur la piste pour déplacer la poignée la plus proche
+    const rangeContainer = document.querySelector('.range-slider-container');
+    if (rangeContainer && yearFilterMin && yearFilterMax) {
+        let isDragging = false;
+        
+        rangeContainer.addEventListener('mousedown', (e) => {
+            // Ignorer les clics sur les thumbs des sliders
+            if (e.target.classList.contains('range-slider')) {
+                isDragging = true;
+                return;
+            }
+            
+            const rect = rangeContainer.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(1, clickX / rect.width));
+            
+            const min = +yearFilterMin.min;
+            const max = +yearFilterMin.max;
+            const clickedYear = Math.round(min + (max - min) * percent);
+            
+            // Déterminer quelle poignée est la plus proche
+            const minVal = +yearFilterMin.value;
+            const maxVal = +yearFilterMax.value;
+            const distToMin = Math.abs(clickedYear - minVal);
+            const distToMax = Math.abs(clickedYear - maxVal);
+            
+            if (distToMin <= distToMax) {
+                yearFilterMin.value = clickedYear;
+            } else {
+                yearFilterMax.value = clickedYear;
+            }
+            
+            updateRangeFill();
+            applySelectionsToUI();
+            updateFilteredData();
+            updateVisualization();
+        });
+        
+        rangeContainer.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+    }
 
     const modeRadios = document.querySelectorAll('input[name="mode"]');
     modeRadios.forEach(r => r.addEventListener('change', (e) => {
@@ -403,6 +469,27 @@ function setupEventListeners() {
             if (typeof window.__reapplyZoom === 'function') window.__reapplyZoom();
         });
     }
+    
+    // Bouton retour en haut
+    const scrollToTopBtn = document.getElementById('scrollToTop');
+    if (scrollToTopBtn) {
+        // Afficher/masquer le bouton selon le scroll
+        window.addEventListener('scroll', () => {
+            if (window.pageYOffset > 300) {
+                scrollToTopBtn.classList.add('visible');
+            } else {
+                scrollToTopBtn.classList.remove('visible');
+            }
+        });
+        
+        // Scroll vers le haut au clic
+        scrollToTopBtn.addEventListener('click', () => {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        });
+    }
 }
 
 // Filtrage des données par année (<= year)
@@ -415,7 +502,7 @@ function filterDataByYear(year) {
 }
 
 // Mise à jour de toutes les visualisations
-function updateVisualization() {
+function updateVisualization(skipTableRecreation = false) {
     const { root } = buildHierarchy(currentMode, filteredData, currentSizeMode);
     
     // Update film count display with actual visualized films
@@ -425,7 +512,11 @@ function updateVisualization() {
     document.getElementById('filteredCount').textContent = uniqueFilms;
     
     renderPack(root);
-    createDataTableForRoot(root);
+    
+    // Ne pas recréer le tableau si on vient d'appliquer des filtres de tableau
+    if (!skipTableRecreation) {
+        createDataTableForRoot(root);
+    }
 }
 
 // Rendu du Circle Packing zoomable
@@ -488,8 +579,9 @@ function renderPack(dataRoot) {
         .attr('class', d => d.parent ? (d.children ? 'node group' : 'node leaf') : 'node root')
         .style('fill', d => d.children ? '#f7f7ff' : color(d.parent && d.parent.data.name || ''))
         .style('stroke', d => d.children ? '#dcdcff' : '#c9c9ff')
+        .style('stroke-width', '1px')
         .on('click', (event, d) => {
-            // Si c'est une feuille (film), zoomer sur le parent (groupe)
+            // Comportement normal : zoom
             const target = (!d.children && d.parent) ? d.parent : d;
             if (focus !== target) {
                 zoom(target);
@@ -545,6 +637,14 @@ function renderPack(dataRoot) {
             .style('fill-opacity', l => l.parent === focus ? 1 : 0)
             .on('start', function(l) { if (l.parent === focus) this.style.display = 'inline'; })
             .on('end', function(l) { if (l.parent !== focus) this.style.display = 'none'; });
+        
+        // Mettre à jour les labels de films si activés
+        if (showTitles && typeof window.__displayFilmTitles === 'function') {
+            // Attendre la fin de la transition avant d'afficher les titres
+            transition.on('end', () => {
+                window.__displayFilmTitles();
+            });
+        }
     }
 
     function zoomTo(v) {
@@ -638,6 +738,8 @@ function createDataTable(films) {
 }
 
 function applyTableFilters() {
+    // Ne plus synchroniser les titres avec le graphique
+    
     currentTableData = baseTableData.filter(film => {
         // Filter by title
         if (tableFilters.title.size > 0 && !tableFilters.title.has(film.name)) {
@@ -669,6 +771,8 @@ function applyTableFilters() {
     });
     currentPage = 1;
     
+    // Ne plus mettre à jour le graphique depuis les filtres du tableau
+    
     if (!currentTableData.length) {
         const container = d3.select('#dataTable');
         container.html('<p class="loading">Aucune donnée à afficher</p>');
@@ -696,12 +800,12 @@ function sortTableData() {
         } else if (tableSortColumn === 'popularity') {
             aVal = a.popularity || 0;
             bVal = b.popularity || 0;
+        } else if (tableSortColumn === 'budget') {
+            aVal = a.budget || 0;
+            bVal = b.budget || 0;
         } else if (tableSortColumn === 'revenue') {
             aVal = a.revenue || 0;
             bVal = b.revenue || 0;
-        } else if (tableSortColumn === 'runtime') {
-            aVal = a.runtime || 0;
-            bVal = b.runtime || 0;
         } else if (tableSortColumn === 'genres') {
             const genresA = parseArrayField(a.genres);
             const genresB = parseArrayField(b.genres);
@@ -770,23 +874,28 @@ function renderTable() {
     const table = container.append('table');
     const thead = table.append('thead');
     
+    // Remove any existing click listener first to prevent duplicates
+    d3.select('body').on('click.closeOverlay', null);
+    
     // Add click listener on body to close overlays when clicking outside
-    d3.select('body').on('click.closeOverlay', function(event) {
-        if (activeTableFilters.size > 0) {
-            activeTableFilters.clear();
-            renderTable();
-        }
-    });
+    if (activeTableFilters.size > 0) {
+        d3.select('body').on('click.closeOverlay', function(event) {
+            if (activeTableFilters.size > 0) {
+                activeTableFilters.clear();
+                renderTable();
+            }
+        });
+    }
     
     // Create header row
     const headerRow = thead.append('tr');
     const headerData = [
         { label: 'Titre', filterKey: 'title', sortKey: 'title' },
-        { label: currentSizeMode === 'budget' ? 'Budget' : 'Popularité', filterKey: null, sortKey: 'popularity' },
-        { label: 'Année', filterKey: 'year', sortKey: 'year' },
+        { label: 'Popularité', filterKey: null, sortKey: 'popularity' },
         { label: 'Note', filterKey: 'note', sortKey: 'note' },
+        { label: 'Budget', filterKey: null, sortKey: 'budget' },
         { label: 'Revenus', filterKey: null, sortKey: 'revenue' },
-        { label: 'Durée', filterKey: null, sortKey: 'runtime' },
+        { label: 'Année', filterKey: 'year', sortKey: 'year' },
         { label: 'Genres', filterKey: 'genres', sortKey: 'genres' },
         { label: 'Productions', filterKey: 'productions', sortKey: 'productions' }
     ];
@@ -1039,11 +1148,11 @@ function renderTable() {
         .append('tr');
 
     rows.append('td').text(d => d.name);
-    rows.append('td').text(d => currentSizeMode === 'budget' ? (d.value ? `$${(d.value / 1e6).toFixed(1)}M` : 'N/A') : Math.round(d.value));
-    rows.append('td').text(d => d.year || 'N/A');
+    rows.append('td').text(d => Math.round(d.popularity || 0));
     rows.append('td').text(d => d.vote_average ? d.vote_average.toFixed(1) : 'N/A');
+    rows.append('td').text(d => d.budget ? `$${(d.budget / 1e6).toFixed(1)}M` : 'N/A');
     rows.append('td').text(d => d.revenue ? `$${(d.revenue / 1e6).toFixed(1)}M` : 'N/A');
-    rows.append('td').text(d => d.runtime ? `${d.runtime} min` : 'N/A');
+    rows.append('td').text(d => d.year || 'N/A');
     
     // Genres column with clickable tags
     rows.append('td')
@@ -1056,25 +1165,56 @@ function renderTable() {
             }
             genres.forEach((genre, i) => {
                 if (i > 0) cell.append('span').text(', ');
-                cell.append('span')
+                const tag = cell.append('span')
                     .attr('class', 'filter-tag')
                     .text(genre)
                     .style('cursor', 'pointer')
-                    .style('color', '#667eea')
-                    .style('text-decoration', 'underline')
-                    .style('font-weight', selectedGenres.has(genre) ? 'bold' : 'normal')
-                    .on('click', function(event) {
-                        event.stopPropagation();
-                        pushFiltersHistory();
-                        if (selectedGenres.has(genre)) {
-                            selectedGenres.delete(genre);
-                        } else {
-                            selectedGenres.add(genre);
-                        }
-                        applySelectionsToUI();
-                        updateFilteredData();
-                        updateVisualization();
-                    });
+                    .style('text-decoration', 'underline');
+                
+                // Coloration selon l'état
+                if (excludedGenres.has(genre)) {
+                    tag.style('color', '#ff4444')
+                        .style('text-decoration', 'line-through')
+                        .style('font-weight', 'bold');
+                } else if (selectedGenres.has(genre)) {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'bold');
+                } else {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'normal');
+                }
+                
+                // Clic gauche : sélectionner/désélectionner
+                tag.on('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (selectedGenres.has(genre)) {
+                        selectedGenres.delete(genre);
+                    } else {
+                        selectedGenres.add(genre);
+                        excludedGenres.delete(genre);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
+                
+                // Clic droit : exclure/inclure
+                tag.on('contextmenu', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (excludedGenres.has(genre)) {
+                        excludedGenres.delete(genre);
+                    } else {
+                        excludedGenres.add(genre);
+                        selectedGenres.delete(genre);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
             });
         });
     
@@ -1089,25 +1229,56 @@ function renderTable() {
             }
             prods.slice(0, 3).forEach((prod, i) => {
                 if (i > 0) cell.append('span').text(', ');
-                cell.append('span')
+                const tag = cell.append('span')
                     .attr('class', 'filter-tag')
                     .text(prod)
                     .style('cursor', 'pointer')
-                    .style('color', '#667eea')
-                    .style('text-decoration', 'underline')
-                    .style('font-weight', selectedCompanies.has(prod) ? 'bold' : 'normal')
-                    .on('click', function(event) {
-                        event.stopPropagation();
-                        pushFiltersHistory();
-                        if (selectedCompanies.has(prod)) {
-                            selectedCompanies.delete(prod);
-                        } else {
-                            selectedCompanies.add(prod);
-                        }
-                        applySelectionsToUI();
-                        updateFilteredData();
-                        updateVisualization();
-                    });
+                    .style('text-decoration', 'underline');
+                
+                // Coloration selon l'état
+                if (excludedCompanies.has(prod)) {
+                    tag.style('color', '#ff4444')
+                        .style('text-decoration', 'line-through')
+                        .style('font-weight', 'bold');
+                } else if (selectedCompanies.has(prod)) {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'bold');
+                } else {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'normal');
+                }
+                
+                // Clic gauche : sélectionner/désélectionner
+                tag.on('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (selectedCompanies.has(prod)) {
+                        selectedCompanies.delete(prod);
+                    } else {
+                        selectedCompanies.add(prod);
+                        excludedCompanies.delete(prod);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
+                
+                // Clic droit : exclure/inclure
+                tag.on('contextmenu', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (excludedCompanies.has(prod)) {
+                        excludedCompanies.delete(prod);
+                    } else {
+                        excludedCompanies.add(prod);
+                        selectedCompanies.delete(prod);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
             });
             if (prods.length > 3) {
                 cell.append('span').text(' ...');
@@ -1191,11 +1362,11 @@ function updateTableBody() {
         .append('tr');
 
     rows.append('td').text(d => d.name);
-    rows.append('td').text(d => currentSizeMode === 'budget' ? (d.value ? `$${(d.value / 1e6).toFixed(1)}M` : 'N/A') : Math.round(d.value));
-    rows.append('td').text(d => d.year || 'N/A');
+    rows.append('td').text(d => Math.round(d.popularity || 0));
     rows.append('td').text(d => d.vote_average ? d.vote_average.toFixed(1) : 'N/A');
+    rows.append('td').text(d => d.budget ? `$${(d.budget / 1e6).toFixed(1)}M` : 'N/A');
     rows.append('td').text(d => d.revenue ? `$${(d.revenue / 1e6).toFixed(1)}M` : 'N/A');
-    rows.append('td').text(d => d.runtime ? `${d.runtime} min` : 'N/A');
+    rows.append('td').text(d => d.year || 'N/A');
     
     // Genres column with clickable tags
     rows.append('td')
@@ -1208,25 +1379,56 @@ function updateTableBody() {
             }
             genres.forEach((genre, i) => {
                 if (i > 0) cell.append('span').text(', ');
-                cell.append('span')
+                const tag = cell.append('span')
                     .attr('class', 'filter-tag')
                     .text(genre)
                     .style('cursor', 'pointer')
-                    .style('color', '#667eea')
-                    .style('text-decoration', 'underline')
-                    .style('font-weight', selectedGenres.has(genre) ? 'bold' : 'normal')
-                    .on('click', function(event) {
-                        event.stopPropagation();
-                        pushFiltersHistory();
-                        if (selectedGenres.has(genre)) {
-                            selectedGenres.delete(genre);
-                        } else {
-                            selectedGenres.add(genre);
-                        }
-                        applySelectionsToUI();
-                        updateFilteredData();
-                        updateVisualization();
-                    });
+                    .style('text-decoration', 'underline');
+                
+                // Coloration selon l'état
+                if (excludedGenres.has(genre)) {
+                    tag.style('color', '#ff4444')
+                        .style('text-decoration', 'line-through')
+                        .style('font-weight', 'bold');
+                } else if (selectedGenres.has(genre)) {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'bold');
+                } else {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'normal');
+                }
+                
+                // Clic gauche : sélectionner/désélectionner
+                tag.on('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (selectedGenres.has(genre)) {
+                        selectedGenres.delete(genre);
+                    } else {
+                        selectedGenres.add(genre);
+                        excludedGenres.delete(genre);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
+                
+                // Clic droit : exclure/inclure
+                tag.on('contextmenu', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (excludedGenres.has(genre)) {
+                        excludedGenres.delete(genre);
+                    } else {
+                        excludedGenres.add(genre);
+                        selectedGenres.delete(genre);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
             });
         });
     
@@ -1241,25 +1443,56 @@ function updateTableBody() {
             }
             prods.slice(0, 3).forEach((prod, i) => {
                 if (i > 0) cell.append('span').text(', ');
-                cell.append('span')
+                const tag = cell.append('span')
                     .attr('class', 'filter-tag')
                     .text(prod)
                     .style('cursor', 'pointer')
-                    .style('color', '#667eea')
-                    .style('text-decoration', 'underline')
-                    .style('font-weight', selectedCompanies.has(prod) ? 'bold' : 'normal')
-                    .on('click', function(event) {
-                        event.stopPropagation();
-                        pushFiltersHistory();
-                        if (selectedCompanies.has(prod)) {
-                            selectedCompanies.delete(prod);
-                        } else {
-                            selectedCompanies.add(prod);
-                        }
-                        applySelectionsToUI();
-                        updateFilteredData();
-                        updateVisualization();
-                    });
+                    .style('text-decoration', 'underline');
+                
+                // Coloration selon l'état
+                if (excludedCompanies.has(prod)) {
+                    tag.style('color', '#ff4444')
+                        .style('text-decoration', 'line-through')
+                        .style('font-weight', 'bold');
+                } else if (selectedCompanies.has(prod)) {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'bold');
+                } else {
+                    tag.style('color', '#667eea')
+                        .style('font-weight', 'normal');
+                }
+                
+                // Clic gauche : sélectionner/désélectionner
+                tag.on('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (selectedCompanies.has(prod)) {
+                        selectedCompanies.delete(prod);
+                    } else {
+                        selectedCompanies.add(prod);
+                        excludedCompanies.delete(prod);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
+                
+                // Clic droit : exclure/inclure
+                tag.on('contextmenu', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    pushFiltersHistory();
+                    if (excludedCompanies.has(prod)) {
+                        excludedCompanies.delete(prod);
+                    } else {
+                        excludedCompanies.add(prod);
+                        selectedCompanies.delete(prod);
+                    }
+                    applySelectionsToUI();
+                    updateFilteredData();
+                    updateVisualization();
+                });
             });
             if (prods.length > 3) {
                 cell.append('span').text(' ...');
@@ -1376,16 +1609,20 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
     if (!container) return;
     container.innerHTML = '';
 
+    // Déterminer quel Set d'exclusion utiliser
+    const excludedSet = kind === 'genre' ? excludedGenres : excludedCompanies;
+
     // Calculate available items based on current filters
     const availableItems = getAvailableItems(kind);
 
-    // Separate items into three categories
+    // Separate items into four categories
     const selected = allItems.filter(x => selectedSet.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
-    const available = allItems.filter(x => !selectedSet.has(x) && availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
-    const excluded = allItems.filter(x => !selectedSet.has(x) && !availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
+    const excluded = allItems.filter(x => excludedSet.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
+    const available = allItems.filter(x => !selectedSet.has(x) && !excludedSet.has(x) && availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
+    const unavailable = allItems.filter(x => !selectedSet.has(x) && !excludedSet.has(x) && !availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
     
-    // Order: selected → available → excluded
-    const ordered = [...selected, ...available, ...excluded];
+    // Order: selected → excluded → available → unavailable
+    const ordered = [...selected, ...excluded, ...available, ...unavailable];
 
     let isDragging = false;
     let dragMode = null; // 'add' or 'remove'
@@ -1412,13 +1649,16 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
     ordered.forEach(name => {
         const div = document.createElement('div');
         const isSelected = selectedSet.has(name);
-        const isExcluded = !isSelected && !availableItems.has(name);
+        const isExcluded = excludedSet.has(name);
+        const isUnavailable = !isSelected && !isExcluded && !availableItems.has(name);
         
         div.className = 'multi-item';
         if (isSelected) {
             div.className += ' selected';
         } else if (isExcluded) {
             div.className += ' excluded';
+        } else if (isUnavailable) {
+            div.className += ' unavailable';
         }
         
         div.textContent = name;
@@ -1435,13 +1675,24 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
                 hasMoved = false;
                 
                 // Determine mode and apply to start item immediately
-                if (!isExcluded && !selectedSet.has(name)) {
+                if (isExcluded) {
+                    // Si exclu, on l'inclut (devient sélectionné)
                     dragMode = 'add';
                     pushFiltersHistory();
+                    excludedSet.delete(name);
                     selectedSet.add(name);
                     hasChanges = true;
                     applySelectionsToUI();
+                } else if (!isUnavailable && !selectedSet.has(name)) {
+                    // Si normal et disponible, on le sélectionne
+                    dragMode = 'add';
+                    pushFiltersHistory();
+                    selectedSet.add(name);
+                    excludedSet.delete(name);
+                    hasChanges = true;
+                    applySelectionsToUI();
                 } else if (selectedSet.has(name)) {
+                    // Si déjà sélectionné, on le désélectionne
                     dragMode = 'remove';
                     pushFiltersHistory();
                     selectedSet.delete(name);
@@ -1470,8 +1721,9 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
             }
             
             if (dragMode === 'add') {
-                if (!availableItems.has(name) || selectedSet.has(name)) return;
+                if (!availableItems.has(name) || selectedSet.has(name) || excludedSet.has(name)) return;
                 selectedSet.add(name);
+                excludedSet.delete(name);
                 hasChanges = true;
                 applySelectionsToUI();
             } else if (dragMode === 'remove') {
@@ -1482,16 +1734,21 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
             }
         });
 
-        // Right click: remove
+        // Right click: exclure/inclure
         div.addEventListener('contextmenu', (e) => {
             e.preventDefault();
-            if (selectedSet.has(name)) {
-                pushFiltersHistory();
-                selectedSet.delete(name);
-                applySelectionsToUI();
-                updateFilteredData();
-                updateVisualization();
+            pushFiltersHistory();
+            if (excludedSet.has(name)) {
+                // Retirer de l'exclusion
+                excludedSet.delete(name);
+            } else {
+                // Ajouter à l'exclusion (même si sélectionné)
+                excludedSet.add(name);
+                selectedSet.delete(name); // Retirer de la sélection si présent
             }
+            applySelectionsToUI();
+            updateFilteredData();
+            updateVisualization();
         });
         container.appendChild(div);
     });
@@ -1565,8 +1822,23 @@ function updateFilteredData() {
             return d.year >= yearMin && d.year <= yearMax;
         })
         .filter(d => {
+            // Filtrer par titre si des titres sont sélectionnés
+            if (selectedTitles.size > 0) {
+                if (!selectedTitles.has(d.title)) return false;
+            }
+            
             const gs = parseArrayField(d.genres);
             const ps = parseArrayField(d.production_companies);
+
+            // Exclure les genres exclus
+            if (excludedGenres.size > 0) {
+                if (gs.some(x => excludedGenres.has(x))) return false;
+            }
+            
+            // Exclure les productions exclues
+            if (excludedCompanies.size > 0) {
+                if (ps.some(x => excludedCompanies.has(x))) return false;
+            }
 
             if (selectedGenres.size) {
                 if (strictGenre) {

@@ -362,13 +362,13 @@ function renderBaseBubbleChart(movies, filters) {
     .axisBottom(x)
     .ticks(computeXTicks())
     .tickFormat(axisMoney)
-    .tickPadding(-8);
+    .tickPadding(8);
 
   const yAxis = d3
     .axisLeft(y)
     .ticks(computeYTicks())
     .tickFormat(axisMoney)
-    .tickPadding(-10);
+    .tickPadding(10);
 
   const xAxisG = axesG
     .append("g")

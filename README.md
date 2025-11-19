@@ -59,27 +59,25 @@ Source : https://datavizcatalogue.com/
 ## Circle Packing
 
         Au plus haut niveau, afficher le genre des films
-        Au second niveau , afficher les sociétés de productions.
         Au plus bas, afficher les 10 plus gros films
         
         La taille des bulles varient en fonction de la popularité, de la note grace à un filtre
         Le zoom dans une bulle permet d'afficher le contenu. 
         La souris sur une bulle permet d'afficher un infobulle qui donnera les valeurs exacts correspondant à la popularité et/ou la note
-        Au niveau le plus bas (Film) afficher le résumé du film.
 
         Filtre:
-            Filtre sur la Date
+            Filtre sur l'année
             Filtre sur les genres
             Filtre sur les productions
             Filtre sur films
-            Filtre sur afficher X films
+            Filtre sur top 10/100 films en fonction de la vision à afficher
 
 
 ## Heatmap
 ```
 - Croisement entre le genre et la date de sortie des films.
 - Couleur en fonction du nombre de films.
-- Une vue globale par décénnie et éventuellement les genres regroupés.
+- Une vue globale par décénnie.
 - Possibilité de zoomer pour avoir plus de détail (par année au lieu de décennies)
 - Afficher le nombre de films, la popularité moyenne et la durée moyenne lors du survol de la souris.
 - Filtres sur année, genre, entreprise de production, durée, popularité

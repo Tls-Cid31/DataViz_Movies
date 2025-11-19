@@ -75,12 +75,13 @@ Source : https://datavizcatalogue.com/
 
 ## Heatmap
 ```
-- Croisement entre le genre et la date de sortie des films.
-- Couleur en fonction du nombre de films.
-- Une vue globale par décénnie.
+- Croisement entre le genre et la date de sortie des films
+- Couleur en fonction du nombre de films (ratio par rapport au nombre de films total de la période ou du genre)
+- Une vue globale par décénnie
 - Possibilité de zoomer pour avoir plus de détail (par année au lieu de décennies)
-- Afficher le nombre de films, la popularité moyenne et la durée moyenne lors du survol de la souris.
-- Filtres sur année, genre, entreprise de production, durée, popularité
+- Afficher le nombre de films, la note moyenne, la popularité moyenne et la durée moyenne lors du survol de la souris
+- Top 10 des films affiché lors du click sur une cellule
+- Filtres sur entreprise de production, note, popularité, durée
 ```
 
 ## Scatter plot ou Bubble chart

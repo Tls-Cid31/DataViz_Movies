@@ -13,19 +13,27 @@ let moviesData = [];
 let filteredData = [];
 let currentMode = 'genre'; // 'genre' | 'production'
 let currentSizeMode = 'popularity'; // 'popularity' | 'budget'
+let currentTopMode = 'all'; // 'all' | 'top10' | 'top100'
 let currentFocus = null;   // focus du zoom (node group)
 let currentTableData = []; // données actuelles du tableau
 let baseTableData = []; // données de base avant filtres de table
+// Note: selectedYears et selectedNotes sont les références, pas besoin de dupliquer
 let tableFilters = {
     title: new Set(),
-    year: new Set(),
-    note: new Set(),
+    year: null, // Sera initialisé avec selectedYears
+    note: null, // Sera initialisé avec selectedNotes
     genres: new Set(),
     productions: new Set()
 };
+// Filtres numériques du tableau (opérateur et valeurs)
+let numericTableFilters = {
+    popularity: null, // { op: 'gte'|'lte'|'between', v1: number, v2?: number }
+    budget: null,
+    revenue: null
+};
 let activeTableFilters = new Set(); // colonnes avec filtre actif visible
-let tableSortColumn = 'year'; // colonne de tri actuelle (tri par défaut sur l'année)
-let tableSortOrder = 'desc'; // 'asc' ou 'desc' (années récentes en premier)
+let tableSortColumn = 'popularity'; // colonne de tri actuelle (tri par défaut sur la métrique choisie)
+let tableSortOrder = 'desc'; // 'asc' ou 'desc' (valeurs les plus élevées en premier)
 let currentPage = 1;       // page actuelle de la pagination
 let selectedGenres = new Set();
 let selectedCompanies = new Set();
@@ -33,9 +41,16 @@ let selectedTitles = new Set(); // Titres sélectionnés depuis le tableau
 let excludedGenres = new Set(); // Genres exclus (clic droit)
 let excludedCompanies = new Set(); // Productions exclues (clic droit)
 let excludedTitles = new Set(); // Films exclus (clic droit dans le filtre films)
+let selectedYears = new Set(); // Années sélectionnées (équivalent à tableFilters.year)
+let selectedNotes = new Set(); // Notes sélectionnées (équivalent à tableFilters.note)
+let excludedYears = new Set(); // Années exclues (clic droit)
+let excludedNotes = new Set(); // Notes exclues (clic droit)
 let genreOptions = [];
-let prodOptions = [];
+let prodOptions = []; // Liste limitée à 200 pour l'affichage initial
+let allProdOptions = []; // Liste complète de toutes les sociétés pour la recherche
 let filmOptions = []; // Liste des titres pour le filtre films
+let yearOptions = []; // Liste des années pour le filtre années
+let noteOptions = []; // Liste des notes pour le filtre notes
 let filterHistory = []; // historique des sélections pour retour
 let redoHistory = []; // historique pour avancer
 // Zoom UI state
@@ -64,7 +79,7 @@ async function init() {
             // Attendre un peu et réessayer
             setTimeout(() => {
                 if (typeof d3 !== 'undefined') {
-                    console.log('✅ D3.js chargé après attente, version:', d3.version);
+                    // D3 chargé après attente
                     init();
                 } else {
                     showError('Erreur: Bibliothèque D3.js non chargée');
@@ -72,7 +87,7 @@ async function init() {
             }, 500);
             return;
         }
-        console.log('✅ D3.js version:', d3.version);
+        // D3 version disponible
         
         showLoading();
         await loadData();
@@ -169,8 +184,10 @@ function buildHierarchy(mode, data, sizeMode) {
     } else if (sizeMode === 'revenue') {
       sizeValue = +d.revenue;
     } else if (sizeMode === 'vote_average') {
-      // Multiplier par 100 pour donner plus de poids aux notes (0-10 -> 0-1000)
-      sizeValue = (+d.vote_average) * 100;
+      // Utiliser une fonction exponentielle pour amplifier les différences
+      // Note de 5 -> 5^2.5 = 55.9, Note de 8 -> 8^2.5 = 181, Note de 10 -> 10^2.5 = 316
+      const note = +d.vote_average;
+      sizeValue = Math.pow(note, 2.5) * 10;
     } else {
       sizeValue = +d.popularity;
     }
@@ -197,13 +214,25 @@ function buildHierarchy(mode, data, sizeMode) {
       });
     }
   }    // Calculer totaux et limiter le nombre de groupes
-    let groups = Array.from(groupMap, ([name, films]) => ({
-        name,
-        films: films
+    let groups = Array.from(groupMap, ([name, films]) => {
+        let sortedFilms = films
             .filter(f => isFinite(f.value) && f.value > 0)
-            .sort((a, b) => b.value - a.value)
-            .slice(0, config.maxFilmsPerGroup)
-    }));
+            .sort((a, b) => b.value - a.value);
+        
+        // Appliquer la limite Top 10/Top 100 par groupe si activée
+        if (currentTopMode === 'top10') {
+            sortedFilms = sortedFilms.slice(0, 10);
+        } else if (currentTopMode === 'top100') {
+            sortedFilms = sortedFilms.slice(0, 100);
+        } else {
+            sortedFilms = sortedFilms.slice(0, config.maxFilmsPerGroup);
+        }
+        
+        return {
+            name,
+            films: sortedFilms
+        };
+    });
 
     // En mode strict, n'afficher que les groupes sélectionnés
     if (mode === 'genre' && strictGenre && selectedGenres.size) {
@@ -235,6 +264,9 @@ function setupEventListeners() {
     const yearDisplayMax = document.getElementById('yearDisplayMax');
     const rangeFill = document.getElementById('rangeFill');
 
+    // Use timestamp to detect programmatic changes
+    let lastProgrammaticUpdate = 0;
+
     function updateRangeFill() {
         if (!yearFilterMin || !yearFilterMax || !rangeFill) return;
         const min = +yearFilterMin.min;
@@ -256,6 +288,15 @@ function setupEventListeners() {
         if (yearDisplayMin) yearDisplayMin.textContent = String(actualMin);
         if (yearDisplayMax) yearDisplayMax.textContent = String(actualMax);
     }
+    
+    // Expose updateRangeFill globally for use in overlay year selection
+    window.updateRangeFillDisplay = updateRangeFill;
+    window.setYearSliderProgrammatically = function(minYear, maxYear) {
+        lastProgrammaticUpdate = Date.now();
+        if (yearFilterMin) yearFilterMin.value = minYear;
+        if (yearFilterMax) yearFilterMax.value = maxYear;
+        updateRangeFill();
+    };
 
     if (yearFilterMin) {
         yearFilterMin.addEventListener('input', (e) => {
@@ -263,6 +304,10 @@ function setupEventListeners() {
             applySelectionsToUI(); // Update filter states in real-time
         });
         yearFilterMin.addEventListener('change', () => {
+            // Skip if this change happened within 100ms of programmatic update
+            if (Date.now() - lastProgrammaticUpdate < 100) {
+                return;
+            }
             updateFilteredData();
             updateVisualization();
         });
@@ -274,6 +319,10 @@ function setupEventListeners() {
             applySelectionsToUI(); // Update filter states in real-time
         });
         yearFilterMax.addEventListener('change', () => {
+            // Skip if this change happened within 100ms of programmatic update
+            if (Date.now() - lastProgrammaticUpdate < 100) {
+                return;
+            }
             updateFilteredData();
             updateVisualization();
         });
@@ -334,7 +383,20 @@ function setupEventListeners() {
     const sizeRadios = document.querySelectorAll('input[name="sizeMode"]');
     sizeRadios.forEach(r => r.addEventListener('change', (e) => {
         currentSizeMode = e.target.value;
+        // Mettre à jour le tri du tableau selon la métrique choisie
+        tableSortColumn = currentSizeMode === 'vote_average' ? 'note' : currentSizeMode;
+        tableSortOrder = 'desc';
+        sortTableData();
         updateVisualization();
+        renderTable();
+    }));
+
+    const topRadios = document.querySelectorAll('input[name="topMode"]');
+    topRadios.forEach(r => r.addEventListener('change', (e) => {
+        currentTopMode = e.target.value;
+        updateFilteredData();
+        updateVisualization();
+        renderTable();
     }));
 
     // Les listes custom gèrent leurs propres événements dans renderMultiList
@@ -353,19 +415,40 @@ function setupEventListeners() {
                 genres: Array.from(selectedGenres),
                 companies: Array.from(selectedCompanies),
                 titles: Array.from(selectedTitles),
+                years: Array.from(selectedYears),
+                notes: Array.from(selectedNotes),
+                excludedGenres: Array.from(excludedGenres),
+                excludedCompanies: Array.from(excludedCompanies),
+                excludedTitles: Array.from(excludedTitles),
+                excludedYears: Array.from(excludedYears),
+                excludedNotes: Array.from(excludedNotes),
                 strictGenre,
-                strictProd
+                strictProd,
+                numericPop: numericTableFilters.popularity,
+                numericBudget: numericTableFilters.budget,
+                numericRevenue: numericTableFilters.revenue
             });
             const prev = filterHistory.pop();
             selectedGenres = new Set(prev.genres);
             selectedCompanies = new Set(prev.companies);
             selectedTitles = new Set(prev.titles || []);
+            selectedYears = new Set(prev.years || []);
+            selectedNotes = new Set(prev.notes || []);
+            excludedGenres = new Set(prev.excludedGenres || []);
+            excludedCompanies = new Set(prev.excludedCompanies || []);
+            excludedTitles = new Set(prev.excludedTitles || []);
+            excludedYears = new Set(prev.excludedYears || []);
+            excludedNotes = new Set(prev.excludedNotes || []);
             strictGenre = !!prev.strictGenre;
             strictProd = !!prev.strictProd;
+            numericTableFilters.popularity = prev.numericPop || null;
+            numericTableFilters.budget = prev.numericBudget || null;
+            numericTableFilters.revenue = prev.numericRevenue || null;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = strictGenre;
             if (strictProdCheckbox) strictProdCheckbox.checked = strictProd;
             applySelectionsToUI();
             updateFilteredData();
+            applyTableFilters();
             updateVisualization();
         });
     }
@@ -377,19 +460,40 @@ function setupEventListeners() {
                 genres: Array.from(selectedGenres),
                 companies: Array.from(selectedCompanies),
                 titles: Array.from(selectedTitles),
+                years: Array.from(selectedYears),
+                notes: Array.from(selectedNotes),
+                excludedGenres: Array.from(excludedGenres),
+                excludedCompanies: Array.from(excludedCompanies),
+                excludedTitles: Array.from(excludedTitles),
+                excludedYears: Array.from(excludedYears),
+                excludedNotes: Array.from(excludedNotes),
                 strictGenre,
-                strictProd
+                strictProd,
+                numericPop: numericTableFilters.popularity,
+                numericBudget: numericTableFilters.budget,
+                numericRevenue: numericTableFilters.revenue
             });
             const next = redoHistory.pop();
             selectedGenres = new Set(next.genres);
             selectedCompanies = new Set(next.companies);
             selectedTitles = new Set(next.titles || []);
+            selectedYears = new Set(next.years || []);
+            selectedNotes = new Set(next.notes || []);
+            excludedGenres = new Set(next.excludedGenres || []);
+            excludedCompanies = new Set(next.excludedCompanies || []);
+            excludedTitles = new Set(next.excludedTitles || []);
+            excludedYears = new Set(next.excludedYears || []);
+            excludedNotes = new Set(next.excludedNotes || []);
             strictGenre = !!next.strictGenre;
             strictProd = !!next.strictProd;
+            numericTableFilters.popularity = next.numericPop || null;
+            numericTableFilters.budget = next.numericBudget || null;
+            numericTableFilters.revenue = next.numericRevenue || null;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = strictGenre;
             if (strictProdCheckbox) strictProdCheckbox.checked = strictProd;
             applySelectionsToUI();
             updateFilteredData();
+            applyTableFilters();
             updateVisualization();
         });
     }
@@ -399,15 +503,23 @@ function setupEventListeners() {
             selectedGenres.clear();
             selectedCompanies.clear();
             selectedTitles.clear();
+            selectedYears.clear();
+            selectedNotes.clear();
             excludedGenres.clear();
             excludedCompanies.clear();
             excludedTitles.clear();
+            excludedYears.clear();
+            excludedNotes.clear();
             strictGenre = false;
             strictProd = false;
+            numericTableFilters.popularity = null;
+            numericTableFilters.budget = null;
+            numericTableFilters.revenue = null;
             if (strictGenreCheckbox) strictGenreCheckbox.checked = false;
             if (strictProdCheckbox) strictProdCheckbox.checked = false;
             applySelectionsToUI();
             updateFilteredData();
+            applyTableFilters();
             updateVisualization();
         });
     }
@@ -739,8 +851,8 @@ function createDataTable(films) {
     baseTableData = uniqueFilms;
     tableFilters = {
         title: new Set(),
-        year: new Set(),
-        note: new Set(),
+        year: selectedYears,
+        note: selectedNotes,
         genres: new Set(),
         productions: new Set()
     };
@@ -749,6 +861,12 @@ function createDataTable(films) {
 
 function applyTableFilters() {
     // Ne plus synchroniser les titres avec le graphique
+    
+    // Mettre à jour la colonne de tri en fonction de currentSizeMode
+    if (tableSortColumn === 'popularity' || tableSortColumn === 'budget' || tableSortColumn === 'revenue' || tableSortColumn === 'vote_average') {
+        // Si on est sur un tri de métrique, mettre à jour selon currentSizeMode
+        tableSortColumn = currentSizeMode === 'vote_average' ? 'note' : currentSizeMode;
+    }
     
     currentTableData = baseTableData.filter(film => {
         // Filter by title
@@ -777,9 +895,43 @@ function applyTableFilters() {
                 return false;
             }
         }
+        // Numeric filters: popularity, budget, revenue
+        if (numericTableFilters.popularity) {
+            const f = numericTableFilters.popularity;
+            const val = film.popularity ?? null;
+            if (val === null) return false;
+            if (f.op === 'gte' && !(val >= f.v1)) return false;
+            if (f.op === 'lte' && !(val <= f.v1)) return false;
+            if (f.op === 'between' && !(val >= f.v1 && val <= f.v2)) return false;
+        }
+        if (numericTableFilters.budget) {
+            const f = numericTableFilters.budget;
+            const val = film.budget ?? null;
+            if (val === null) return false;
+            if (f.op === 'gte' && !(val >= f.v1)) return false;
+            if (f.op === 'lte' && !(val <= f.v1)) return false;
+            if (f.op === 'between' && !(val >= f.v1 && val <= f.v2)) return false;
+        }
+        if (numericTableFilters.revenue) {
+            const f = numericTableFilters.revenue;
+            const val = film.revenue ?? null;
+            if (val === null) return false;
+            if (f.op === 'gte' && !(val >= f.v1)) return false;
+            if (f.op === 'lte' && !(val <= f.v1)) return false;
+            if (f.op === 'between' && !(val >= f.v1 && val <= f.v2)) return false;
+        }
         return true;
     });
     currentPage = 1;
+    
+    // Trier les données après le filtrage
+    sortTableData();
+    
+    // Mettre à jour le compteur de films filtrés
+    updateTableFilterCount();
+    
+    // Mettre à jour les KPI
+    updateFilterKPI();
     
     // Ne plus mettre à jour le graphique depuis les filtres du tableau
     
@@ -790,6 +942,69 @@ function applyTableFilters() {
     }
 
     renderTable(); // Don't preserve scroll, just re-render normally
+}
+
+function updateTableFilterCount() {
+    const countElement = document.getElementById('tableFilteredCount');
+    if (!countElement) return;
+    
+    const totalFilms = baseTableData.length;
+    const filteredFilms = currentTableData.length;
+    const baseCount = Array.from(Object.values(tableFilters)).reduce((sum, set) => sum + set.size, 0);
+    const numericCount = ['popularity','budget','revenue'].reduce((sum, k) => sum + (numericTableFilters[k] ? 1 : 0), 0);
+    const activeFiltersCount = baseCount + numericCount;
+    
+    if (activeFiltersCount === 0) {
+        countElement.textContent = `(${totalFilms} films)`;
+    } else {
+        countElement.textContent = `(${filteredFilms} / ${totalFilms} films - ${activeFiltersCount} filtre${activeFiltersCount > 1 ? 's' : ''} actif${activeFiltersCount > 1 ? 's' : ''})`;
+    }
+}
+
+function updateFilterKPI() {
+    const genresCount = selectedGenres.size + excludedGenres.size;
+    const prodsCount = selectedCompanies.size + excludedCompanies.size;
+    const titlesCount = selectedTitles.size + excludedTitles.size;
+    const yearsCount = selectedYears.size + excludedYears.size;
+    const notesCount = selectedNotes.size + excludedNotes.size;
+    // Compteurs dynamiques pour numériques: nombre de valeurs uniques correspondant au filtre actif
+    const countNumeric = (key) => {
+        const nf = numericTableFilters[key];
+        if (!nf) return 0;
+        const list = getUniqueValuesForColumn(key)
+            .map(v => parseFloat(v))
+            .filter(v => !isNaN(v));
+        if (nf.op === 'gte') return list.filter(v => v >= nf.v1).length;
+        if (nf.op === 'lte') return list.filter(v => v <= nf.v1).length;
+        if (nf.op === 'between') return list.filter(v => v >= nf.v1 && v <= nf.v2).length;
+        return 0;
+    };
+    const popularityCount = countNumeric('popularity');
+    const budgetCount = countNumeric('budget');
+    const revenueCount = countNumeric('revenue');
+    const total = genresCount + prodsCount + titlesCount + yearsCount + notesCount + popularityCount + budgetCount + revenueCount;
+    
+    const kpiGenres = document.getElementById('kpiGenres');
+    const kpiProductions = document.getElementById('kpiProductions');
+    const kpiTitles = document.getElementById('kpiTitles');
+    const kpiYears = document.getElementById('kpiYears');
+    const kpiNotes = document.getElementById('kpiNotes');
+    const kpiPopularity = document.getElementById('kpiPopularity');
+    const kpiBudget = document.getElementById('kpiBudget');
+    const kpiRevenue = document.getElementById('kpiRevenue');
+    const kpiTotal = document.getElementById('kpiTotal');
+    
+    if (kpiGenres) kpiGenres.textContent = `Genres: ${genresCount}`;
+    if (kpiProductions) kpiProductions.textContent = `Productions: ${prodsCount}`;
+    if (kpiTitles) kpiTitles.textContent = `Films: ${titlesCount}`;
+    if (kpiYears) kpiYears.textContent = `Années: ${yearsCount}`;
+    if (kpiNotes) kpiNotes.textContent = `Notes: ${notesCount}`;
+    if (kpiPopularity) kpiPopularity.textContent = `Popularité: ${popularityCount}`;
+    if (kpiBudget) kpiBudget.textContent = `Budget: ${budgetCount}`;
+    if (kpiRevenue) kpiRevenue.textContent = `Revenus: ${revenueCount}`;
+    if (kpiTotal) kpiTotal.textContent = `Total: ${total}`;
+    
+    // KPI mis à jour
 }
 
 function sortTableData() {
@@ -816,6 +1031,9 @@ function sortTableData() {
         } else if (tableSortColumn === 'revenue') {
             aVal = a.revenue || 0;
             bVal = b.revenue || 0;
+        } else if (tableSortColumn === 'vote_average') {
+            aVal = a.vote_average || 0;
+            bVal = b.vote_average || 0;
         } else if (tableSortColumn === 'genres') {
             const genresA = parseArrayField(a.genres);
             const genresB = parseArrayField(b.genres);
@@ -852,6 +1070,12 @@ function getUniqueValuesForColumn(filterKey) {
             if (film.year) values.add(String(film.year));
         } else if (filterKey === 'note') {
             if (film.vote_average) values.add(film.vote_average.toFixed(1));
+        } else if (filterKey === 'popularity') {
+            if (film.popularity !== undefined && film.popularity !== null) values.add(String(Number(film.popularity)));
+        } else if (filterKey === 'budget') {
+            if (film.budget !== undefined && film.budget !== null) values.add(String(Number(film.budget)));
+        } else if (filterKey === 'revenue') {
+            if (film.revenue !== undefined && film.revenue !== null) values.add(String(Number(film.revenue)));
         } else if (filterKey === 'genres') {
             const genres = parseArrayField(film.genres);
             genres.forEach(g => values.add(g));
@@ -901,10 +1125,10 @@ function renderTable() {
     const headerRow = thead.append('tr');
     const headerData = [
         { label: 'Titre', filterKey: 'title', sortKey: 'title' },
-        { label: 'Popularité', filterKey: null, sortKey: 'popularity' },
+        { label: 'Popularité', filterKey: 'popularity', sortKey: 'popularity' },
         { label: 'Note', filterKey: 'note', sortKey: 'note' },
-        { label: 'Budget', filterKey: null, sortKey: 'budget' },
-        { label: 'Revenus', filterKey: null, sortKey: 'revenue' },
+        { label: 'Budget', filterKey: 'budget', sortKey: 'budget' },
+        { label: 'Revenus', filterKey: 'revenue', sortKey: 'revenue' },
         { label: 'Année', filterKey: 'year', sortKey: 'year' },
         { label: 'Genres', filterKey: 'genres', sortKey: 'genres' },
         { label: 'Productions', filterKey: 'productions', sortKey: 'productions' }
@@ -914,6 +1138,7 @@ function renderTable() {
         .data(headerData)
         .enter()
         .append('th')
+        .attr('data-filter-key', d => d.filterKey ? d.filterKey : null)
         .style('position', 'relative')
         .each(function(d, i) {
             const th = d3.select(this);
@@ -955,11 +1180,44 @@ function renderTable() {
             }
             
             if (d.filterKey) {
-                const hasFilter = tableFilters[d.filterKey].size > 0;
+                // Compter sélections + exclusions, ou taille du filtre numérique actif
+                let filterCount = 0;
+                if (d.filterKey === 'genres') {
+                    filterCount = selectedGenres.size + excludedGenres.size;
+                } else if (d.filterKey === 'productions') {
+                    filterCount = selectedCompanies.size + excludedCompanies.size;
+                } else if (d.filterKey === 'title') {
+                    filterCount = selectedTitles.size + excludedTitles.size;
+                } else if (d.filterKey === 'year') {
+                    filterCount = selectedYears.size + excludedYears.size;
+                } else if (d.filterKey === 'note') {
+                    filterCount = selectedNotes.size + excludedNotes.size;
+                } else if (d.filterKey === 'popularity' || d.filterKey === 'budget' || d.filterKey === 'revenue') {
+                    const nf = numericTableFilters[d.filterKey];
+                    if (!nf) {
+                        filterCount = 0;
+                    } else {
+                        // Compter le nombre de valeurs uniques correspondant au filtre
+                        const uniqueVals = getUniqueValuesForColumn(d.filterKey).map(v => parseFloat(v)).filter(v => !isNaN(v));
+                        if (nf.op === 'gte') {
+                            filterCount = uniqueVals.filter(v => v >= nf.v1).length;
+                        } else if (nf.op === 'lte') {
+                            filterCount = uniqueVals.filter(v => v <= nf.v1).length;
+                        } else if (nf.op === 'between') {
+                            filterCount = uniqueVals.filter(v => v >= nf.v1 && v <= nf.v2).length;
+                        } else {
+                            filterCount = 1;
+                        }
+                    }
+                }
+                
+                // Compteur filtre calculé
                 
                 const filterIcon = iconsContainer.append('span')
-                    .attr('class', hasFilter ? 'filter-icon has-filter' : 'filter-icon')
+                    .attr('class', 'filter-icon')
                     .attr('title', 'Filtrer')
+                    .style('position', 'relative')
+                    .style('display', 'inline-block')
                     .on('click', function(event) {
                         event.stopPropagation();
                         activeTableFilters.clear(); // Fermer les autres overlays
@@ -969,16 +1227,48 @@ function renderTable() {
                 
                 filterIcon.append('span').text('🔍');
                 
-                if (hasFilter) {
+                // Afficher le compteur dans un badge sur la loupe
+                if (filterCount > 0) {
                     filterIcon.append('span')
                         .attr('class', 'filter-badge')
-                        .text(tableFilters[d.filterKey].size);
+                        .style('position', 'absolute')
+                        .style('top', '-8px')
+                        .style('right', '-8px')
+                        .style('background', '#28a745')
+                        .style('color', 'white')
+                        .style('border-radius', '12px')
+                        .style('padding', '3px 7px')
+                        .style('font-size', '11px')
+                        .style('font-weight', 'bold')
+                        .style('min-width', '20px')
+                        .style('text-align', 'center')
+                        .style('line-height', '1')
+                        .text(filterCount);
                 }
+                
+                // Icône filtre créée
             }
             
             if (d.filterKey && isFilterActive) {
-                // Déterminer si l'overlay doit s'ouvrir vers le haut (1 ligne) ou vers le bas
-                const shouldOpenUpward = currentTableData.length <= config.itemsPerPage && currentTableData.length <= 1;
+                // Calculer le nombre d'éléments dans l'overlay
+                const allValues = getUniqueValuesForColumn(d.filterKey);
+                const itemCount = Math.min(allValues.length, 100); // Limité à 100
+                
+                // Hauteur estimée de l'overlay
+                const itemHeight = 40; // padding + border par item
+                const headerHeight = 50; // header + search input
+                const maxListHeight = 300; // max-height du scroll
+                const estimatedOverlayHeight = headerHeight + Math.min(itemCount * itemHeight, maxListHeight);
+                
+                // Position du header de colonne et espaces disponibles autour
+                const anchorEl = th.node();
+                const anchorRect = anchorEl ? anchorEl.getBoundingClientRect() : null;
+                const spaceBelow = anchorRect ? (window.innerHeight - anchorRect.bottom) : 0;
+                const spaceAbove = anchorRect ? anchorRect.top : 0;
+
+                // Ouvrir vers le haut uniquement si pas assez d'espace en dessous
+                // ET suffisamment d'espace au-dessus
+                const shouldOpenUpward = !!anchorRect && (estimatedOverlayHeight > spaceBelow) && (spaceAbove >= estimatedOverlayHeight);
                 
                 // Show filter panel overlay
                 const filterPanel = th.append('div')
@@ -987,7 +1277,7 @@ function renderTable() {
                     .style(shouldOpenUpward ? 'bottom' : 'top', '100%')
                     .style('left', '0')
                     .style('min-width', '250px')
-                    .style('max-width', '400px')
+                    .style('max-width', '380px')
                     .style('background', 'white')
                     .style('border', '2px solid #667eea')
                     .style('border-radius', '8px')
@@ -995,11 +1285,12 @@ function renderTable() {
                     .style('z-index', '1000')
                     .style(shouldOpenUpward ? 'margin-bottom' : 'margin-top', '4px')
                     .style('padding', '12px')
-                    .on('click', function(event) {
-                        event.stopPropagation(); // Empêcher la fermeture au clic dans l'overlay
-                    });
+                    .style('display', 'flex')
+                    .style('flex-direction', 'column')
+                    .style('gap', '10px')
+                    .on('click', function(event) { event.stopPropagation(); });
                 
-                // Header with close button
+                // Header with clear and close buttons
                 const panelHeader = filterPanel.append('div')
                     .style('display', 'flex')
                     .style('align-items', 'center')
@@ -1014,8 +1305,60 @@ function renderTable() {
                     .style('color', '#667eea')
                     .style('font-size', '14px');
                 
+                const buttonGroup = panelHeader.append('div')
+                    .style('display', 'flex')
+                    .style('gap', '8px')
+                    .style('align-items', 'center');
+                
+                // Clear filter button
+                buttonGroup.append('button')
+                    .attr('type', 'button')
+                    .text('Effacer')
+                    .style('padding', '4px 8px')
+                    .style('background', '#dc3545')
+                    .style('color', 'white')
+                    .style('border', 'none')
+                    .style('border-radius', '4px')
+                    .style('cursor', 'pointer')
+                    .style('font-size', '12px')
+                    .style('font-weight', 'bold')
+                    .on('click', function(event) {
+                        event.stopPropagation();
+                        pushFiltersHistory();
+                        // Effacer les filtres pour cette colonne
+                        if (d.filterKey === 'genres') {
+                            selectedGenres.clear();
+                            excludedGenres.clear();
+                            tableFilters.genres.clear();
+                        } else if (d.filterKey === 'productions') {
+                            selectedCompanies.clear();
+                            excludedCompanies.clear();
+                            tableFilters.productions.clear();
+                        } else if (d.filterKey === 'title') {
+                            selectedTitles.clear();
+                            excludedTitles.clear();
+                            tableFilters.title.clear();
+                        } else if (d.filterKey === 'year') {
+                            selectedYears.clear();
+                            excludedYears.clear();
+                            tableFilters.year.clear();
+                        } else if (d.filterKey === 'note') {
+                            selectedNotes.clear();
+                            excludedNotes.clear();
+                            tableFilters.note.clear();
+                        } else if (d.filterKey === 'popularity' || d.filterKey === 'budget' || d.filterKey === 'revenue') {
+                            delete numericTableFilters[d.filterKey];
+                        }
+                        applyTableFilters();
+                        updateFilteredData();
+                        updateVisualization();
+                        applySelectionsToUI();
+                        activeTableFilters.delete(d.filterKey);
+                        renderTable();
+                    });
+                
                 // Close button
-                panelHeader.append('span')
+                buttonGroup.append('span')
                     .html('×')
                     .style('cursor', 'pointer')
                     .style('font-size', '24px')
@@ -1030,7 +1373,306 @@ function renderTable() {
                 // Get unique values for this column
                 const uniqueValues = getUniqueValuesForColumn(d.filterKey);
                 
-                // Search input
+                // Pour les filtres numériques (year, note, popularity, budget, revenue), afficher interface avec opérateurs
+                const isNumericFilter = ['year', 'note', 'popularity', 'budget', 'revenue'].includes(d.filterKey);
+                const hasExactOption = d.filterKey === 'year' || d.filterKey === 'note';
+                
+                if (isNumericFilter) {
+                    // Interface pour filtres numériques
+                    let currentOperator = null;
+                    
+                    // Conteneur pour les boutons d'opérateurs
+                    const operatorButtons = filterPanel.append('div')
+                        .style('display', 'flex')
+                        .style('gap', '8px')
+                        .style('margin-bottom', '12px')
+                        .style('flex-wrap', 'wrap');
+                    
+                    let operators = [
+                        { value: 'gte', label: '≥ Supérieur ou égal', symbol: '≥' },
+                        { value: 'lte', label: '≤ Inférieur ou égal', symbol: '≤' },
+                        { value: 'between', label: '↔ Entre', symbol: '↔' }
+                    ];
+                    if (hasExactOption) operators.push({ value: 'exact', label: '= Exact', symbol: '=' });
+                    
+                    // Conteneur pour les champs de saisie (caché initialement)
+                    const inputContainer = filterPanel.append('div')
+                        .style('display', 'none')
+                        .style('margin-bottom', '12px');
+                    
+                    operators.forEach(op => {
+                        operatorButtons.append('button')
+                            .attr('type', 'button')
+                            .text(op.symbol + ' ' + (op.value === 'gte' ? 'Sup.' : op.value === 'lte' ? 'Inf.' : op.value === 'exact' ? 'Égal' : 'Entre'))
+                            .style('flex', hasExactOption ? '0 0 48%' : '0 0 32%')
+                            .style('padding', '8px 12px')
+                            .style('background', '#667eea')
+                            .style('color', 'white')
+                            .style('border', 'none')
+                            .style('border-radius', '4px')
+                            .style('cursor', 'pointer')
+                            .style('font-size', '12px')
+                            .style('font-weight', 'bold')
+                            .style('transition', 'background 0.2s')
+                            .on('mouseenter', function() {
+                                d3.select(this).style('background', '#5568d3');
+                            })
+                            .on('mouseleave', function() {
+                                d3.select(this).style('background', '#667eea');
+                            })
+                            .on('click', function(event) {
+                                event.stopPropagation();
+                                currentOperator = op.value;
+                                
+                                // Afficher les champs de saisie
+                                inputContainer
+                                    .style('display', 'flex')
+                                    .style('flex-direction', 'column')
+                                    .style('gap', '8px');
+                                inputContainer.html('');
+                                
+                                const minVal = Math.min(...uniqueValues.map(v => parseFloat(v)));
+                                const maxVal = Math.max(...uniqueValues.map(v => parseFloat(v)));
+                                // pas de NaN en cas de données manquantes
+                                const safeMin = isFinite(minVal) ? minVal : 0;
+                                const safeMax = isFinite(maxVal) ? maxVal : 0;
+                                
+                                // Déterminer le pas
+                                let step = 1; // pas par défaut
+                                if (d.filterKey === 'note') step = 0.1;
+                                // budget/revenue saisis en millions => step=1 (1 million)
+                                
+                                if (op.value === 'exact') {
+                                    // Valeur exacte (seulement year/note) - bouton appliquer en dessous du champ, hors zone scroll
+                                    const exactWrapper = inputContainer.append('div')
+                                        .style('display', 'flex')
+                                        .style('flex-direction', 'column')
+                                        .style('gap', '8px');
+                                    const input = exactWrapper.append('input')
+                                        .attr('type', 'number')
+                                        .attr('placeholder', 'Valeur exacte')
+                                        .attr('min', safeMin)
+                                        .attr('max', safeMax)
+                                        .attr('step', step)
+                                        .style('width', '100%')
+                                        .style('padding', '6px 10px')
+                                        .style('border', '1px solid #ddd')
+                                        .style('border-radius', '4px')
+                                        .style('font-size', '13px')
+                                        .style('box-sizing', 'border-box')
+                                        .on('keydown', function(event){ if (event.key === 'Enter') exactWrapper.select('button.apply-btn').dispatch('click'); });
+                                    exactWrapper.append('button')
+                                        .attr('type', 'button')
+                                        .attr('class', 'apply-btn')
+                                        .text('Appliquer')
+                                        .style('width', '100%')
+                                        .style('margin', '4px 0 0 0')
+                                        .style('padding', '10px')
+                                        .style('background', '#28a745')
+                                        .style('color', 'white')
+                                        .style('border', 'none')
+                                        .style('border-radius', '6px')
+                                        .style('cursor', 'pointer')
+                                        .style('font-weight', 'bold')
+                                        .on('click', function() {
+                                            const val = parseFloat(input.node().value);
+                                            if (isNaN(val)) return;
+                                            pushFiltersHistory();
+                                            const selectedSet = d.filterKey === 'year' ? selectedYears : selectedNotes;
+                                            const tableFilterSet = tableFilters[d.filterKey];
+                                            selectedSet.clear();
+                                            tableFilterSet.clear();
+                                            uniqueValues.forEach(v => {
+                                                const numVal = parseFloat(v);
+                                                if (Math.abs(numVal - val) < 0.0001) { selectedSet.add(v); tableFilterSet.add(v); }
+                                            });
+                                            applyTableFilters();
+                                            activeTableFilters.delete(d.filterKey);
+                                            renderTable();
+                                            updateFilteredData();
+                                            updateVisualization();
+                                            applySelectionsToUI();
+                                            
+                                            // Repositionner le slider si c'est une année
+                                            if (d.filterKey === 'year' && selectedYears.size > 0) {
+                                                const years = Array.from(selectedYears).map(y => parseInt(y)).filter(y => !isNaN(y));
+                                                if (years.length > 0) {
+                                                    const minYear = Math.min(...years);
+                                                    const maxYear = Math.max(...years);
+                                                    if (window.setYearSliderProgrammatically) {
+                                                        window.setYearSliderProgrammatically(minYear, maxYear);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                } else if (op.value === 'between') {
+                                    // Deux champs pour "entre"
+                                    const inputGroup = inputContainer.append('div')
+                                        .style('display', 'flex')
+                                        .style('gap', '8px')
+                                        .style('align-items', 'center');
+                                    
+                                    const input1 = inputGroup.append('input')
+                                        .attr('type', 'number')
+                                        .attr('placeholder', d.filterKey === 'budget' || d.filterKey === 'revenue' ? 'Min (M€)' : 'Min')
+                                        .attr('min', safeMin)
+                                        .attr('max', safeMax)
+                                        .attr('step', step)
+                                        .style('flex', '1')
+                                        .style('padding', '6px 10px')
+                                        .style('border', '1px solid #ddd')
+                                        .style('border-radius', '4px')
+                                        .style('font-size', '13px')
+                                        .style('box-sizing', 'border-box')
+                                        .on('keydown', function(event){ if (event.key === 'Enter') inputContainer.select('button.apply-btn').dispatch('click'); });
+                                    
+                                    inputGroup.append('span').text('à').style('color', '#666');
+                                    
+                                    const input2 = inputGroup.append('input')
+                                        .attr('type', 'number')
+                                        .attr('placeholder', d.filterKey === 'budget' || d.filterKey === 'revenue' ? 'Max (M€)' : 'Max')
+                                        .attr('min', safeMin)
+                                        .attr('max', safeMax)
+                                        .attr('step', step)
+                                        .style('flex', '1')
+                                        .style('padding', '6px 10px')
+                                        .style('border', '1px solid #ddd')
+                                        .style('border-radius', '4px')
+                                        .style('font-size', '13px')
+                                        .style('box-sizing', 'border-box')
+                                        .on('keydown', function(event){ if (event.key === 'Enter') d3.select(this.parentNode.parentNode).select('button.apply-btn').dispatch('click'); });
+                                    
+                                    const applyBtn = inputContainer.append('button')
+                                        .attr('type', 'button')
+                                        .attr('class', 'apply-btn')
+                                        .text('Appliquer')
+                                        .style('width', '100%')
+                                        .style('margin-top', '4px')
+                                        .style('padding', '10px')
+                                        .style('background', '#28a745')
+                                        .style('color', 'white')
+                                        .style('border', 'none')
+                                        .style('border-radius', '6px')
+                                        .style('cursor', 'pointer')
+                                        .style('font-weight', 'bold')
+                                        .on('click', function() {
+                                            const val1 = parseFloat(input1.node().value);
+                                            const val2 = parseFloat(input2.node().value);
+                                            if (!isNaN(val1) && !isNaN(val2)) {
+                                                pushFiltersHistory();
+                                                const lo = Math.min(val1, val2), hi = Math.max(val1, val2);
+                                                if (d.filterKey === 'year' || d.filterKey === 'note') {
+                                                    const selectedSet = d.filterKey === 'year' ? selectedYears : selectedNotes;
+                                                    const tableFilterSet = tableFilters[d.filterKey];
+                                                    selectedSet.clear();
+                                                    tableFilterSet.clear();
+                                                    uniqueValues.forEach(v => {
+                                                        const numVal = parseFloat(v);
+                                                        if (numVal >= lo && numVal <= hi) { selectedSet.add(v); tableFilterSet.add(v); }
+                                                    });
+                                                } else {
+                                                    // budget/revenue en millions -> stocker valeurs réelles
+                                                    const scale = (d.filterKey === 'budget' || d.filterKey === 'revenue') ? 1000000 : 1;
+                                                    numericTableFilters[d.filterKey] = { op: 'between', v1: lo * scale, v2: hi * scale };
+                                                }
+                                                applyTableFilters();
+                                                activeTableFilters.delete(d.filterKey);
+                                                renderTable();
+                                                // Synchroniser graphique
+                                                updateFilteredData();
+                                                updateVisualization();
+                                                applySelectionsToUI();
+                                                
+                                                // Repositionner le slider si c'est une année
+                                                if (d.filterKey === 'year' && selectedYears.size > 0) {
+                                                    const years = Array.from(selectedYears).map(y => parseInt(y)).filter(y => !isNaN(y));
+                                                    if (years.length > 0) {
+                                                        const minYear = Math.min(...years);
+                                                        const maxYear = Math.max(...years);
+                                                        if (window.setYearSliderProgrammatically) {
+                                                            window.setYearSliderProgrammatically(minYear, maxYear);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                } else {
+                                    // Un seul champ pour >= ou <=
+                                    const input = inputContainer.append('input')
+                                        .attr('type', 'number')
+                                        .attr('placeholder', (d.filterKey === 'budget' || d.filterKey === 'revenue') ? 'Valeur (M€)' : 'Valeur')
+                                        .attr('min', safeMin)
+                                        .attr('max', safeMax)
+                                        .attr('step', step)
+                                        .style('width', '100%')
+                                        .style('padding', '6px 10px')
+                                        .style('border', '1px solid #ddd')
+                                        .style('border-radius', '4px')
+                                        .style('font-size', '13px')
+                                        .style('box-sizing', 'border-box')
+                                        .on('keydown', function(event){ if (event.key === 'Enter') inputContainer.select('button.apply-btn').dispatch('click'); });
+                                    
+                                    const applyBtn2 = inputContainer.append('button')
+                                        .attr('type', 'button')
+                                        .attr('class', 'apply-btn')
+                                        .text('Appliquer')
+                                        .style('width', '100%')
+                                        .style('margin-top', '4px')
+                                        .style('padding', '10px')
+                                        .style('background', '#28a745')
+                                        .style('color', 'white')
+                                        .style('border', 'none')
+                                        .style('border-radius', '6px')
+                                        .style('cursor', 'pointer')
+                                        .style('font-weight', 'bold')
+                                        .on('click', function() {
+                                            const val = parseFloat(input.node().value);
+                                            if (!isNaN(val)) {
+                                                pushFiltersHistory();
+                                                if (d.filterKey === 'year' || d.filterKey === 'note') {
+                                                    const selectedSet = d.filterKey === 'year' ? selectedYears : selectedNotes;
+                                                    const tableFilterSet = tableFilters[d.filterKey];
+                                                    selectedSet.clear();
+                                                    tableFilterSet.clear();
+                                                    uniqueValues.forEach(v => {
+                                                        const numVal = parseFloat(v);
+                                                        if (op.value === 'gte' && numVal >= val) { selectedSet.add(v); tableFilterSet.add(v); }
+                                                        else if (op.value === 'lte' && numVal <= val) { selectedSet.add(v); tableFilterSet.add(v); }
+                                                    });
+                                                } else {
+                                                    // valeur en millions pour budget/revenue
+                                                    const scale = (d.filterKey === 'budget' || d.filterKey === 'revenue') ? 1000000 : 1;
+                                                    numericTableFilters[d.filterKey] = { op: op.value, v1: val * scale };
+                                                }
+                                                applyTableFilters();
+                                                activeTableFilters.delete(d.filterKey);
+                                                renderTable();
+                                                // Synchroniser graphique
+                                                updateFilteredData();
+                                                updateVisualization();
+                                                applySelectionsToUI();
+                                                
+                                                // Repositionner le slider si c'est une année
+                                                if (d.filterKey === 'year' && selectedYears.size > 0) {
+                                                    const years = Array.from(selectedYears).map(y => parseInt(y)).filter(y => !isNaN(y));
+                                                    if (years.length > 0) {
+                                                        const minYear = Math.min(...years);
+                                                        const maxYear = Math.max(...years);
+                                                        if (window.setYearSliderProgrammatically) {
+                                                            window.setYearSliderProgrammatically(minYear, maxYear);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                }
+                            });
+                    });
+                    
+                    return; // Ne pas afficher la liste de valeurs pour les filtres numériques
+                }
+                
+                // Search input (pour les filtres non-numériques uniquement)
                 const searchInput = filterPanel.append('input')
                     .attr('type', 'text')
                     .attr('placeholder', 'Rechercher...')
@@ -1071,6 +1713,12 @@ function renderTable() {
                     } else if (d.filterKey === 'title') {
                         selectedSet = selectedTitles;
                         excludedSet = excludedTitles;
+                    } else if (d.filterKey === 'year') {
+                        selectedSet = selectedYears;
+                        excludedSet = excludedYears;
+                    } else if (d.filterKey === 'note') {
+                        selectedSet = selectedNotes;
+                        excludedSet = excludedNotes;
                     } else {
                         selectedSet = new Set();
                         excludedSet = new Set();
@@ -1084,16 +1732,41 @@ function renderTable() {
                         availableItems = getAvailableItems('prod');
                     } else if (d.filterKey === 'title') {
                         availableItems = getAvailableItems('film');
+                    } else if (d.filterKey === 'year') {
+                        availableItems = getAvailableItems('year');
+                    } else if (d.filterKey === 'note') {
+                        availableItems = getAvailableItems('note');
                     }
                     
                     // Séparer par état: sélectionné, exclu, disponible, indisponible
-                    const selected = filtered.filter(v => selectedSet.has(v));
-                    const excluded = filtered.filter(v => !selectedSet.has(v) && excludedSet.has(v));
-                    const available = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && (availableItems.size === 0 || availableItems.has(v)));
-                    const unavailable = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && availableItems.size > 0 && !availableItems.has(v));
+                    const selected = filtered.filter(v => selectedSet.has(v)).sort((a, b) => {
+                        // Tri numérique pour year et note, alphabétique pour le reste
+                        if (d.filterKey === 'year' || d.filterKey === 'note') {
+                            return parseFloat(b) - parseFloat(a); // Décroissant
+                        }
+                        return a.localeCompare(b, 'fr');
+                    });
+                    const excluded = filtered.filter(v => !selectedSet.has(v) && excludedSet.has(v)).sort((a, b) => {
+                        if (d.filterKey === 'year' || d.filterKey === 'note') {
+                            return parseFloat(b) - parseFloat(a);
+                        }
+                        return a.localeCompare(b, 'fr');
+                    });
+                    const available = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && (availableItems.size === 0 || availableItems.has(v))).sort((a, b) => {
+                        if (d.filterKey === 'year' || d.filterKey === 'note') {
+                            return parseFloat(b) - parseFloat(a);
+                        }
+                        return a.localeCompare(b, 'fr');
+                    });
+                    const unavailable = filtered.filter(v => !selectedSet.has(v) && !excludedSet.has(v) && availableItems.size > 0 && !availableItems.has(v)).sort((a, b) => {
+                        if (d.filterKey === 'year' || d.filterKey === 'note') {
+                            return parseFloat(b) - parseFloat(a);
+                        }
+                        return a.localeCompare(b, 'fr');
+                    });
                     
-                    // Ordonner: sélectionné, disponible, indisponible, exclu
-                    const ordered = [...selected, ...available, ...unavailable, ...excluded];
+                    // Ordonner: sélectionné, exclu, disponible, indisponible
+                    const ordered = [...selected, ...excluded, ...available, ...unavailable];
                     
                     ordered.slice(0, 100).forEach(value => {
                         const isSelected = selectedSet.has(value);
@@ -1102,13 +1775,21 @@ function renderTable() {
                         let bgColor = 'white';
                         let textColor = '#333';
                         let opacity = 1;
+                        let borderLeft = 'none';
+                        let fontWeight = 'normal';
+                        let textDecoration = 'none';
                         
                         if (isSelected) {
                             bgColor = '#d4edda';
                             textColor = '#155724';
+                            borderLeft = '4px solid #28a745';
+                            fontWeight = 'bold';
                         } else if (isExcluded) {
                             bgColor = '#f8d7da';
                             textColor = '#721c24';
+                            borderLeft = '4px solid #dc3545';
+                            fontWeight = 'bold';
+                            textDecoration = 'line-through';
                         } else if (isUnavailable) {
                             bgColor = '#f5f5f5';
                             textColor = '#999';
@@ -1120,6 +1801,9 @@ function renderTable() {
                             .style('cursor', isUnavailable ? 'not-allowed' : 'pointer')
                             .style('background', bgColor)
                             .style('color', textColor)
+                            .style('border-left', borderLeft)
+                            .style('font-weight', fontWeight)
+                            .style('text-decoration', textDecoration)
                             .style('opacity', opacity)
                             .style('border-bottom', '1px solid #eee')
                             .style('display', 'flex')
@@ -1136,19 +1820,60 @@ function renderTable() {
                             })
                             .on('click', function(event) {
                                 event.stopPropagation();
+                                // Click item overlay
+                                
+                                // Sauvegarder l'état actuel dans l'historique
+                                pushFiltersHistory();
+                                // Retirer de l'exclusion si présent
+                                if (isExcluded) {
+                                    if (d.filterKey === 'genres') excludedGenres.delete(value);
+                                    else if (d.filterKey === 'productions') excludedCompanies.delete(value);
+                                    else if (d.filterKey === 'title') excludedTitles.delete(value);
+                                    else if (d.filterKey === 'year') excludedYears.delete(value);
+                                    else if (d.filterKey === 'note') excludedNotes.delete(value);
+                                }
+                                // Toggle sélection
                                 if (tableFilters[d.filterKey].has(value)) {
                                     tableFilters[d.filterKey].delete(value);
                                 } else {
                                     tableFilters[d.filterKey].add(value);
                                 }
+                                
                                 // Synchroniser avec les filtres principaux
                                 if (d.filterKey === 'genres') {
-                                    if (tableFilters.genres.has(value)) selectedGenres.add(value); else selectedGenres.delete(value);
+                                    if (tableFilters.genres.has(value)) {
+                                        selectedGenres.add(value);
+                                    } else {
+                                        selectedGenres.delete(value);
+                                    }
                                 } else if (d.filterKey === 'productions') {
-                                    if (tableFilters.productions.has(value)) selectedCompanies.add(value); else selectedCompanies.delete(value);
+                                    if (tableFilters.productions.has(value)) {
+                                        selectedCompanies.add(value);
+                                    } else {
+                                        selectedCompanies.delete(value);
+                                    }
                                 } else if (d.filterKey === 'title') {
-                                    if (tableFilters.title.has(value)) selectedTitles.add(value); else selectedTitles.delete(value);
+                                    if (tableFilters.title.has(value)) {
+                                        selectedTitles.add(value);
+                                    } else {
+                                        selectedTitles.delete(value);
+                                    }
+                                } else if (d.filterKey === 'year') {
+                                    if (tableFilters.year.has(value)) {
+                                        selectedYears.add(value);
+                                    } else {
+                                        selectedYears.delete(value);
+                                    }
+                                } else if (d.filterKey === 'note') {
+                                    if (tableFilters.note.has(value)) {
+                                        selectedNotes.add(value);
+                                    } else {
+                                        selectedNotes.delete(value);
+                                    }
                                 }
+                                
+                                // Synchronisation terminée
+                                
                                 // Update data and re-render values list only
                                 currentTableData = baseTableData.filter(film => {
                                     if (tableFilters.title.size > 0 && !tableFilters.title.has(film.name)) return false;
@@ -1169,30 +1894,91 @@ function renderTable() {
                                 const currentSearch = searchInput.node().value;
                                 renderValues(currentSearch);
                                 
-                                // Update the filter badge in the header
-                                const currentHeader = d3.select(`#dataTable thead th:nth-child(${headerData.findIndex(h => h.filterKey === d.filterKey) + 1})`);
-                                const filterIcon = currentHeader.select('.filter-icon');
-                                
-                                // Update has-filter class
-                                const hasFilter = tableFilters[d.filterKey].size > 0;
-                                filterIcon.classed('has-filter', hasFilter);
-                                
-                                // Update or remove badge
-                                filterIcon.select('.filter-badge').remove();
-                                if (hasFilter) {
-                                    filterIcon.append('span')
-                                        .attr('class', 'filter-badge')
-                                        .text(tableFilters[d.filterKey].size);
-                                }
-                                
                                 // Update table body without full re-render to preserve overlay
                                 updateTableBody();
-                                // Mettre à jour la visualisation si genres/productions/titres changent
-                                if (d.filterKey === 'genres' || d.filterKey === 'productions' || d.filterKey === 'title') {
+                                // Mettre à jour la visualisation pour TOUS les filtres (pas seulement genres/productions/titres)
+                                if (d.filterKey === 'genres' || d.filterKey === 'productions' || d.filterKey === 'title' || d.filterKey === 'year' || d.filterKey === 'note') {
                                     updateFilteredData();
                                     updateVisualization();
                                     applySelectionsToUI();
+                                    
+                                    // Si c'est une année, ajuster les poignées du slider
+                                    if (d.filterKey === 'year' && selectedYears.size > 0) {
+                                        const years = Array.from(selectedYears).map(y => parseInt(y)).filter(y => !isNaN(y));
+                                        if (years.length > 0) {
+                                            const minYear = Math.min(...years);
+                                            const maxYear = Math.max(...years);
+                                            if (window.setYearSliderProgrammatically) {
+                                                window.setYearSliderProgrammatically(minYear, maxYear);
+                                            }
+                                        }
+                                    }
                                 }
+                                
+                                // KPI
+                                updateFilterKPI();
+                            })
+                            .on('contextmenu', function(event) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                
+                                if (isUnavailable) return;
+                                
+                                // Clic droit item overlay
+                                
+                                // Sauvegarder l'état actuel dans l'historique
+                                pushFiltersHistory();
+                                
+                                // Gérer l'exclusion selon le type
+                                if (d.filterKey === 'genres') {
+                                    if (excludedGenres.has(value)) {
+                                        excludedGenres.delete(value);
+                                    } else {
+                                        excludedGenres.add(value);
+                                        selectedGenres.delete(value);
+                                    }
+                                } else if (d.filterKey === 'productions') {
+                                    if (excludedCompanies.has(value)) {
+                                        excludedCompanies.delete(value);
+                                    } else {
+                                        excludedCompanies.add(value);
+                                        selectedCompanies.delete(value);
+                                    }
+                                } else if (d.filterKey === 'title') {
+                                    if (excludedTitles.has(value)) {
+                                        excludedTitles.delete(value);
+                                    } else {
+                                        excludedTitles.add(value);
+                                        selectedTitles.delete(value);
+                                    }
+                                } else if (d.filterKey === 'year') {
+                                    if (excludedYears.has(value)) {
+                                        excludedYears.delete(value);
+                                    } else {
+                                        excludedYears.add(value);
+                                        selectedYears.delete(value);
+                                    }
+                                } else if (d.filterKey === 'note') {
+                                    if (excludedNotes.has(value)) {
+                                        excludedNotes.delete(value);
+                                    } else {
+                                        excludedNotes.add(value);
+                                        selectedNotes.delete(value);
+                                    }
+                                }
+                                
+                                // Re-render the values to update display
+                                const currentSearch = searchInput.node().value;
+                                renderValues(currentSearch);
+                                
+                                updateFilteredData();
+                                updateVisualization();
+                                applySelectionsToUI();
+                                
+                                // Update table body
+                                updateTableBody();
+                                
+                                updateFilterKPI();
                             });
                         
                         item.append('input')
@@ -1671,18 +2457,60 @@ function pushFiltersHistory() {
         genres: Array.from(selectedGenres),
         companies: Array.from(selectedCompanies),
         titles: Array.from(selectedTitles),
+        years: Array.from(selectedYears),
+        notes: Array.from(selectedNotes),
+        excludedGenres: Array.from(excludedGenres),
+        excludedCompanies: Array.from(excludedCompanies),
+        excludedTitles: Array.from(excludedTitles),
+        excludedYears: Array.from(excludedYears),
+        excludedNotes: Array.from(excludedNotes),
         strictGenre,
-        strictProd
+        strictProd,
+        numericPop: numericTableFilters.popularity,
+        numericBudget: numericTableFilters.budget,
+        numericRevenue: numericTableFilters.revenue
     });
     // Clear redo history when a new action is performed
     redoHistory = [];
 }
 
 function applySelectionsToUI() {
+    // Mise à jour UI multi-listes
+    
+    // Mettre à jour prodOptions pour prioriser les productions disponibles
+    if (allProdOptions && allProdOptions.length > 0) {
+        const availableProds = getAvailableItems('prod');
+        
+        // Créer un map avec les fréquences pour trier
+        const prodFreqMap = new Map();
+        allProdOptions.forEach((prod, index) => {
+            prodFreqMap.set(prod, allProdOptions.length - index); // Score basé sur la position
+        });
+        
+        // Séparer disponibles et non disponibles
+        const availableProdsArray = allProdOptions.filter(p => availableProds.has(p));
+        const unavailableProdsArray = allProdOptions.filter(p => !availableProds.has(p));
+        
+        // Limiter à 200 pour l'affichage : disponibles en priorité
+        prodOptions = [...availableProdsArray, ...unavailableProdsArray].slice(0, 200);
+    }
+    
     renderMultiList('genreList', genreOptions, selectedGenres, 'genre');
-    renderMultiList('prodList', prodOptions, selectedCompanies, 'prod');
+    renderMultiList('prodList', prodOptions, selectedCompanies, 'prod', allProdOptions);
     if (filmOptions && filmOptions.length) {
         renderMultiList('filmList', filmOptions, selectedTitles, 'film');
+    }
+    if (yearOptions && yearOptions.length) {
+        // Rendu liste années
+        renderMultiList('yearList', yearOptions, selectedYears, 'year');
+    } else {
+        // Années indisponibles
+    }
+    if (noteOptions && noteOptions.length) {
+        // Rendu liste notes
+        renderMultiList('noteList', noteOptions, selectedNotes, 'note');
+    } else {
+        // Notes indisponibles
     }
     // Re-apply search filters after rendering
     reapplySearchFilters();
@@ -1693,6 +2521,8 @@ function reapplySearchFilters() {
     const genreSearch = document.getElementById('genreSearch');
     const prodSearch = document.getElementById('prodSearch');
     const filmSearch = document.getElementById('filmSearch');
+    const yearSearch = document.getElementById('yearSearch');
+    const noteSearch = document.getElementById('noteSearch');
     
     if (genreSearch && genreSearch.value) {
         filterListItems('genreList', genreSearch.value.toLowerCase().trim());
@@ -1703,29 +2533,53 @@ function reapplySearchFilters() {
     if (filmSearch && filmSearch.value) {
         filterListItems('filmList', filmSearch.value.toLowerCase().trim());
     }
+    if (yearSearch && yearSearch.value) {
+        filterListItems('yearList', yearSearch.value.toLowerCase().trim());
+    }
+    if (noteSearch && noteSearch.value) {
+        filterListItems('noteList', noteSearch.value.toLowerCase().trim());
+    }
 }
 
 // Render a custom multi-select list with left click add, right click remove
-function renderMultiList(containerId, allItems, selectedSet, kind) {
+function renderMultiList(containerId, allItems, selectedSet, kind, allItemsForSearch = null) {
     const container = document.getElementById(containerId);
     if (!container) return;
+    
+    // Si allItemsForSearch n'est pas fourni, utiliser allItems
+    const searchableItems = allItemsForSearch || allItems;
+    
+    // Stocker la liste complète comme attribut data pour la recherche
+    container.dataset.allItems = JSON.stringify(searchableItems);
     container.innerHTML = '';
 
-    // Déterminer quel Set d'exclusion utiliser
+    // Rendu multi-liste
+    
+    // Convertir selectedSet en Set si c'est un tableau
+    const selectedSetObj = Array.isArray(selectedSet) ? new Set(selectedSet) : selectedSet;
+    
+    // Déterminer quel Set/Array d'exclusion utiliser
     let excludedSet;
     if (kind === 'genre') excludedSet = excludedGenres;
     else if (kind === 'prod') excludedSet = excludedCompanies;
     else if (kind === 'film') excludedSet = excludedTitles;
+    else if (kind === 'year') excludedSet = excludedYears;
+    else if (kind === 'note') excludedSet = excludedNotes;
     else excludedSet = new Set();
 
     // Calculate available items based on current filters
     const availableItems = getAvailableItems(kind);
 
+    // Fonction de tri : numérique pour year/note, alphabétique pour le reste
+    const sortFn = (kind === 'year' || kind === 'note') 
+        ? (a, b) => parseFloat(b) - parseFloat(a)
+        : (a, b) => a.localeCompare(b, 'fr');
+
     // Separate items into four categories
-    const selected = allItems.filter(x => selectedSet.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
-    const excluded = allItems.filter(x => excludedSet.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
-    const available = allItems.filter(x => !selectedSet.has(x) && !excludedSet.has(x) && availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
-    const unavailable = allItems.filter(x => !selectedSet.has(x) && !excludedSet.has(x) && !availableItems.has(x)).sort((a,b) => a.localeCompare(b, 'fr'));
+    const selected = allItems.filter(x => selectedSetObj.has(x)).sort(sortFn);
+    const excluded = allItems.filter(x => excludedSet.has(x)).sort(sortFn);
+    const available = allItems.filter(x => !selectedSetObj.has(x) && !excludedSet.has(x) && availableItems.has(x)).sort(sortFn);
+    const unavailable = allItems.filter(x => !selectedSetObj.has(x) && !excludedSet.has(x) && !availableItems.has(x)).sort(sortFn);
     
     // Order: selected → excluded → available → unavailable
     const ordered = [...selected, ...excluded, ...available, ...unavailable];
@@ -1754,17 +2608,27 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
 
     ordered.forEach(name => {
         const div = document.createElement('div');
-        const isSelected = selectedSet.has(name);
+        const isSelected = selectedSetObj.has(name);
         const isExcluded = excludedSet.has(name);
         const isUnavailable = !isSelected && !isExcluded && !availableItems.has(name);
         
         div.className = 'multi-item';
         if (isSelected) {
             div.className += ' selected';
+            div.style.backgroundColor = '#d4edda';
+            div.style.color = '#155724';
+            div.style.fontWeight = 'bold';
+            div.style.borderLeft = '4px solid #28a745';
         } else if (isExcluded) {
             div.className += ' excluded';
+            div.style.backgroundColor = '#f8d7da';
+            div.style.color = '#721c24';
+            div.style.fontWeight = 'bold';
+            div.style.borderLeft = '4px solid #dc3545';
+            div.style.textDecoration = 'line-through';
         } else if (isUnavailable) {
             div.className += ' unavailable';
+            div.style.opacity = '0.5';
         }
         
         div.textContent = name;
@@ -1772,10 +2636,33 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
         // Prevent text selection during drag
         div.addEventListener('selectstart', (e) => e.preventDefault());
         
+        // Helper functions pour gérer Set ou Array
+        const addToSelected = (val) => {
+            if (Array.isArray(selectedSet)) {
+                if (!selectedSet.includes(val)) selectedSet.push(val);
+            } else {
+                selectedSet.add(val);
+            }
+        };
+        
+        const removeFromSelected = (val) => {
+            if (Array.isArray(selectedSet)) {
+                const idx = selectedSet.indexOf(val);
+                if (idx > -1) selectedSet.splice(idx, 1);
+            } else {
+                selectedSet.delete(val);
+            }
+        };
+        
+        const hasInSelected = (val) => {
+            return Array.isArray(selectedSet) ? selectedSet.includes(val) : selectedSet.has(val);
+        };
+        
         // Mouse down: prepare for drag or click
         div.addEventListener('mousedown', (e) => {
             if (e.button === 0) { // Left click
                 e.preventDefault();
+                // MouseDown multi-liste
                 isDragging = true;
                 dragStartItem = name;
                 hasMoved = false;
@@ -1786,22 +2673,25 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
                     dragMode = 'add';
                     pushFiltersHistory();
                     excludedSet.delete(name);
-                    selectedSet.add(name);
+                    addToSelected(name);
+                    // Exclu -> sélectionné
                     hasChanges = true;
                     applySelectionsToUI();
-                } else if (!isUnavailable && !selectedSet.has(name)) {
+                } else if (!isUnavailable && !hasInSelected(name)) {
                     // Si normal et disponible, on le sélectionne
                     dragMode = 'add';
                     pushFiltersHistory();
-                    selectedSet.add(name);
+                    addToSelected(name);
                     excludedSet.delete(name);
+                    // Normal -> sélectionné
                     hasChanges = true;
                     applySelectionsToUI();
-                } else if (selectedSet.has(name)) {
+                } else if (hasInSelected(name)) {
                     // Si déjà sélectionné, on le désélectionne
                     dragMode = 'remove';
                     pushFiltersHistory();
-                    selectedSet.delete(name);
+                    removeFromSelected(name);
+                    // Sélectionné -> normal
                     hasChanges = true;
                     applySelectionsToUI();
                 }
@@ -1827,14 +2717,14 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
             }
             
             if (dragMode === 'add') {
-                if (!availableItems.has(name) || selectedSet.has(name) || excludedSet.has(name)) return;
-                selectedSet.add(name);
+                if (!availableItems.has(name) || hasInSelected(name) || excludedSet.has(name)) return;
+                addToSelected(name);
                 excludedSet.delete(name);
                 hasChanges = true;
                 applySelectionsToUI();
             } else if (dragMode === 'remove') {
-                if (!selectedSet.has(name)) return;
-                selectedSet.delete(name);
+                if (!hasInSelected(name)) return;
+                removeFromSelected(name);
                 hasChanges = true;
                 applySelectionsToUI();
             }
@@ -1843,12 +2733,15 @@ function renderMultiList(containerId, allItems, selectedSet, kind) {
         // Right click: exclure/inclure (maintenant aussi pour films)
         div.addEventListener('contextmenu', (e) => {
             e.preventDefault();
+            // Clic droit multi-liste
             pushFiltersHistory();
             if (excludedSet.has(name)) {
                 excludedSet.delete(name);
+                // Exclu -> normal
             } else {
                 excludedSet.add(name);
-                selectedSet.delete(name);
+                removeFromSelected(name);
+                // Normal/Sélectionné -> exclu
             }
             applySelectionsToUI();
             updateFilteredData();
@@ -1873,6 +2766,28 @@ function getAvailableItems(kind) {
         // Apply year filter
         if (isFinite(movie.year) && (movie.year < yearMin || movie.year > yearMax)) {
             continue;
+        }
+        
+        // Apply year table filter
+        if (kind !== 'year' && selectedYears.size > 0) {
+            if (!selectedYears.has(String(movie.year || ''))) continue;
+        }
+        
+        // Exclure les années exclues (sauf si on calcule year)
+        if (kind !== 'year' && excludedYears.size > 0) {
+            if (excludedYears.has(String(movie.year || ''))) continue;
+        }
+        
+        // Apply note table filter
+        if (kind !== 'note' && selectedNotes.size > 0) {
+            const noteStr = movie.vote_average ? movie.vote_average.toFixed(1) : '';
+            if (!selectedNotes.has(noteStr)) continue;
+        }
+        
+        // Exclure les notes exclues (sauf si on calcule note)
+        if (kind !== 'note' && excludedNotes.size > 0) {
+            const noteStr = movie.vote_average ? movie.vote_average.toFixed(1) : '';
+            if (excludedNotes.has(noteStr)) continue;
         }
         
         const gs = parseArrayField(movie.genres);
@@ -1915,7 +2830,7 @@ function getAvailableItems(kind) {
             if (excludedTitles.has(movie.title)) continue;
             // Add all genres from this movie
             gs.forEach(g => availableSet.add(g));
-        } else { // productions
+        } else if (kind === 'prod') { // productions
             // Check if movie matches genre and title filters
             if (selectedGenres.size > 0) {
                 if (strictGenre) {
@@ -1931,6 +2846,76 @@ function getAvailableItems(kind) {
             if (excludedTitles.has(movie.title)) continue;
             // Add all productions from this movie
             ps.forEach(p => availableSet.add(p));
+        } else if (kind === 'year') {
+            // Calculer les années disponibles en excluant le filtre year lui-même
+            // Vérifier genres
+            if (selectedGenres.size > 0) {
+                if (strictGenre) {
+                    const requireAllSelected = Array.from(selectedGenres).every(x => gs.includes(x));
+                    if (!requireAllSelected) continue;
+                } else if (!gs.some(x => selectedGenres.has(x))) {
+                    continue;
+                }
+            }
+            // Vérifier productions
+            if (selectedCompanies.size > 0) {
+                if (strictProd) {
+                    const requireAllSelectedP = Array.from(selectedCompanies).every(x => ps.includes(x));
+                    if (!requireAllSelectedP) continue;
+                } else if (!ps.some(x => selectedCompanies.has(x))) {
+                    continue;
+                }
+            }
+            // Vérifier les films sélectionnés
+            if (selectedTitles.size > 0 && !selectedTitles.has(movie.title)) continue;
+            // Exclure les films exclus
+            if (excludedTitles.has(movie.title)) continue;
+            // Vérifier notes (mais pas year)
+            if (selectedNotes.size > 0) {
+                const noteStr = movie.vote_average ? movie.vote_average.toFixed(1) : '';
+                if (!selectedNotes.has(noteStr)) continue;
+            }
+            // Exclure les notes exclues
+            if (excludedNotes.size > 0) {
+                const noteStr = movie.vote_average ? movie.vote_average.toFixed(1) : '';
+                if (excludedNotes.has(noteStr)) continue;
+            }
+            // Add year from this movie
+            if (movie.year) availableSet.add(String(movie.year));
+        } else if (kind === 'note') {
+            // Calculer les notes disponibles en excluant le filtre note lui-même
+            // Vérifier genres
+            if (selectedGenres.size > 0) {
+                if (strictGenre) {
+                    const requireAllSelected = Array.from(selectedGenres).every(x => gs.includes(x));
+                    if (!requireAllSelected) continue;
+                } else if (!gs.some(x => selectedGenres.has(x))) {
+                    continue;
+                }
+            }
+            // Vérifier productions
+            if (selectedCompanies.size > 0) {
+                if (strictProd) {
+                    const requireAllSelectedP = Array.from(selectedCompanies).every(x => ps.includes(x));
+                    if (!requireAllSelectedP) continue;
+                } else if (!ps.some(x => selectedCompanies.has(x))) {
+                    continue;
+                }
+            }
+            // Vérifier les films sélectionnés
+            if (selectedTitles.size > 0 && !selectedTitles.has(movie.title)) continue;
+            // Exclure les films exclus
+            if (excludedTitles.has(movie.title)) continue;
+            // Vérifier years (mais pas note)
+            if (selectedYears.size > 0) {
+                if (!selectedYears.has(String(movie.year || ''))) continue;
+            }
+            // Exclure les années exclues
+            if (excludedYears.size > 0) {
+                if (excludedYears.has(String(movie.year || ''))) continue;
+            }
+            // Add note from this movie
+            if (movie.vote_average) availableSet.add(movie.vote_average.toFixed(1));
         }
     }
     
@@ -1954,6 +2939,28 @@ function updateFilteredData() {
             return d.year >= yearMin && d.year <= yearMax;
         })
         .filter(d => {
+            // Filtrer par année (selectedYears)
+            if (selectedYears.size > 0) {
+                if (!selectedYears.has(String(d.year || ''))) return false;
+            }
+            
+            // Exclure les années exclues
+            if (excludedYears.size > 0) {
+                if (excludedYears.has(String(d.year || ''))) return false;
+            }
+            
+            // Filtrer par note (selectedNotes)
+            if (selectedNotes.size > 0) {
+                const noteStr = d.vote_average ? d.vote_average.toFixed(1) : '';
+                if (!selectedNotes.has(noteStr)) return false;
+            }
+            
+            // Exclure les notes exclues
+            if (excludedNotes.size > 0) {
+                const noteStr = d.vote_average ? d.vote_average.toFixed(1) : '';
+                if (excludedNotes.has(noteStr)) return false;
+            }
+            
             // Filtrer par titre si des titres sont sélectionnés
             if (selectedTitles.size > 0) {
                 if (!selectedTitles.has(d.title)) return false;
@@ -1996,20 +3003,58 @@ function updateFilteredData() {
                     if (!ps.some(x => selectedCompanies.has(x))) return false;
                 }
             }
+
+            // Appliquer aussi les filtres numériques de l'overlay table au graphe
+            if (numericTableFilters.popularity) {
+                const f = numericTableFilters.popularity;
+                const v = d.popularity;
+                if (!isFinite(v)) return false;
+                if (f.op === 'gte' && !(v >= f.v1)) return false;
+                if (f.op === 'lte' && !(v <= f.v1)) return false;
+                if (f.op === 'between' && !(v >= f.v1 && v <= f.v2)) return false;
+            }
+            if (numericTableFilters.budget) {
+                const f = numericTableFilters.budget;
+                const v = d.budget;
+                if (!isFinite(v)) return false;
+                if (f.op === 'gte' && !(v >= f.v1)) return false;
+                if (f.op === 'lte' && !(v <= f.v1)) return false;
+                if (f.op === 'between' && !(v >= f.v1 && v <= f.v2)) return false;
+            }
+            if (numericTableFilters.revenue) {
+                const f = numericTableFilters.revenue;
+                const v = d.revenue;
+                if (!isFinite(v)) return false;
+                if (f.op === 'gte' && !(v >= f.v1)) return false;
+                if (f.op === 'lte' && !(v <= f.v1)) return false;
+                if (f.op === 'between' && !(v >= f.v1 && v <= f.v2)) return false;
+            }
             return true;
         });
+    
+    // Note: Le filtre Top 10/Top 100 est maintenant appliqué par groupe dans buildHierarchy
+    // On ne filtre plus globalement ici
+    
     // Synchroniser les filtres de tableau avec les sélections principales
     tableFilters.title = new Set(selectedTitles);
+    tableFilters.year = selectedYears;
+    tableFilters.note = selectedNotes;
     tableFilters.genres = new Set(selectedGenres);
     tableFilters.productions = new Set(selectedCompanies);
+    
+    // Mettre à jour les KPI
+    updateFilterKPI();
 }
 
 // Populate filters from data
 function populateFilters() {
+    // Initialisation des listes de filtres
     const genreList = document.getElementById('genreList');
     const prodList = document.getElementById('prodList');
-    const filmList = document.getElementById('filmList');
-    if (!genreList || !prodList || !filmList) return;
+    
+    
+    
+    if (!genreList || !prodList) return;
 
     const genreFreq = new Map();
     const prodFreq = new Map();
@@ -2027,19 +3072,49 @@ function populateFilters() {
     genreOptions = Array.from(genreFreq, ([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count)
         .map(o => o.name);
-    prodOptions = Array.from(prodFreq, ([name, count]) => ({ name, count }))
+    
+    // Stocker TOUTES les productions pour la recherche
+    allProdOptions = Array.from(prodFreq, ([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count)
+        .map(o => o.name);
+    
+    // Pour l'affichage initial, prioriser celles qui sont disponibles dans les données filtrées
+    const availableProds = getAvailableItems('prod');
+    const allProdsWithFreq = Array.from(prodFreq, ([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+    
+    // Séparer en disponibles et non disponibles
+    const availableProdsWithFreq = allProdsWithFreq.filter(p => availableProds.has(p.name));
+    const unavailableProdsWithFreq = allProdsWithFreq.filter(p => !availableProds.has(p.name));
+    
+    // Combiner: disponibles d'abord, puis les autres, limiter à 200 pour l'affichage initial
+    prodOptions = [...availableProdsWithFreq, ...unavailableProdsWithFreq]
         .slice(0, 200)
         .map(o => o.name);
 
     renderMultiList('genreList', genreOptions, selectedGenres, 'genre');
-    renderMultiList('prodList', prodOptions, selectedCompanies, 'prod');
-    // Film options: tous les titres triés (peut être lourd, optimisation future possible)
+    renderMultiList('prodList', prodOptions, selectedCompanies, 'prod', allProdOptions);
+    // Film options: initialisés pour overlay uniquement
     if (filmOptions.length === 0) {
         filmOptions = moviesData.map(d => d.title).filter(t => !!t).sort((a,b)=>a.localeCompare(b,'fr'));
     }
-    renderMultiList('filmList', filmOptions, selectedTitles, 'film');
-
+    
+    // Year options: toutes les années disponibles triées par ordre décroissant
+    const yearSet = new Set();
+    moviesData.forEach(d => {
+        if (d.year) yearSet.add(String(d.year));
+    });
+    yearOptions = Array.from(yearSet).sort((a, b) => parseFloat(b) - parseFloat(a));
+    // Années chargées
+    
+    // Note options: toutes les notes disponibles triées par ordre décroissant
+    const noteSet = new Set();
+    moviesData.forEach(d => {
+        if (d.vote_average) noteSet.add(d.vote_average.toFixed(1));
+    });
+    noteOptions = Array.from(noteSet).sort((a, b) => parseFloat(b) - parseFloat(a));
+    // Notes chargées
+    
     // Setup search listeners
     setupSearchListeners();
 }
@@ -2117,6 +3192,52 @@ function setupSearchListeners() {
             }
         });
     }
+    
+    // Year search
+    const yearSearch = document.getElementById('yearSearch');
+    const yearSearchClear = document.getElementById('yearSearchClear');
+    if (yearSearch) {
+        yearSearch.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            filterListItems('yearList', query);
+            if (yearSearchClear) {
+                yearSearchClear.classList.toggle('visible', e.target.value.length > 0);
+            }
+        });
+    }
+    if (yearSearchClear) {
+        yearSearchClear.addEventListener('click', () => {
+            if (yearSearch) {
+                yearSearch.value = '';
+                filterListItems('yearList', '');
+                yearSearchClear.classList.remove('visible');
+                yearSearch.focus();
+            }
+        });
+    }
+    
+    // Note search
+    const noteSearch = document.getElementById('noteSearch');
+    const noteSearchClear = document.getElementById('noteSearchClear');
+    if (noteSearch) {
+        noteSearch.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            filterListItems('noteList', query);
+            if (noteSearchClear) {
+                noteSearchClear.classList.toggle('visible', e.target.value.length > 0);
+            }
+        });
+    }
+    if (noteSearchClear) {
+        noteSearchClear.addEventListener('click', () => {
+            if (noteSearch) {
+                noteSearch.value = '';
+                filterListItems('noteList', '');
+                noteSearchClear.classList.remove('visible');
+                noteSearch.focus();
+            }
+        });
+    }
 }
 
 // Filter list items based on search query
@@ -2124,6 +3245,53 @@ function filterListItems(containerId, query) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
+    // Si une recherche est active et qu'on a une liste complète stockée, recréer la liste
+    if (query && container.dataset.allItems) {
+        try {
+            const allItems = JSON.parse(container.dataset.allItems);
+            const filteredItems = allItems.filter(item => 
+                item.toLowerCase().includes(query.toLowerCase())
+            );
+            
+            // Identifier le type de liste pour appeler renderMultiList avec les bons paramètres
+            let kind = '';
+            let selectedSet = null;
+            let displayItems = filteredItems;
+            let searchableItems = allItems;
+            
+            if (containerId === 'genreList') {
+                kind = 'genre';
+                selectedSet = selectedGenres;
+                displayItems = filteredItems;
+            } else if (containerId === 'prodList') {
+                kind = 'prod';
+                selectedSet = selectedCompanies;
+                displayItems = filteredItems;
+                searchableItems = allProdOptions;
+            } else if (containerId === 'filmList') {
+                kind = 'film';
+                selectedSet = selectedTitles;
+                displayItems = filteredItems;
+            } else if (containerId === 'yearList') {
+                kind = 'year';
+                selectedSet = selectedYears;
+                displayItems = filteredItems;
+            } else if (containerId === 'noteList') {
+                kind = 'note';
+                selectedSet = selectedNotes;
+                displayItems = filteredItems;
+            }
+            
+            if (kind && selectedSet) {
+                renderMultiList(containerId, displayItems, selectedSet, kind, searchableItems);
+                return;
+            }
+        } catch (e) {
+            console.error('Error parsing allItems:', e);
+        }
+    }
+    
+    // Sinon, comportement par défaut : filtrer les éléments visibles
     const items = container.querySelectorAll('.multi-item');
     let visibleCount = 0;
 

@@ -1,0 +1,56 @@
+CORRECTIONS À APPLIQUER:
+
+1. Ligne 1005 - Remplacer:
+        { label: 'Popularité', filterKey: null, sortKey: 'popularity' },
+   Par:
+        { label: 'Popularité', filterKey: 'popularity', sortKey: 'popularity' },
+
+2. Ligne 1007 - Remplacer:
+        { label: 'Budget', filterKey: null, sortKey: 'budget' },
+   Par:
+        { label: 'Budget', filterKey: 'budget', sortKey: 'budget' },
+
+3. Ligne 1008 - Remplacer:
+        { label: 'Revenus', filterKey: null, sortKey: 'revenue' },
+   Par:
+        { label: 'Revenus', filterKey: 'revenue', sortKey: 'revenue' },
+
+4. Ligne 1185 - Remplacer:
+                const isNumericFilter = d.filterKey === 'year' || d.filterKey === 'note';
+   Par:
+                const isNumericFilter = ['year', 'note', 'budget', 'revenue', 'popularity'].includes(d.filterKey);
+                const hasExactOption = d.filterKey === 'year' || d.filterKey === 'note';
+
+5. Ligne 1198 - Remplacer:
+                    const operators = [
+                        { value: 'gte', label: '≥ Supérieur ou égal', symbol: '≥' },
+                        { value: 'lte', label: '≤ Inférieur ou égal', symbol: '≤' },
+                        { value: 'between', label: '↔ Entre', symbol: '↔' }
+                    ];
+   Par:
+                    let operators = [
+                        { value: 'gte', label: '≥ Supérieur ou égal', symbol: '≥' },
+                        { value: 'lte', label: '≤ Inférieur ou égal', symbol: '≤' },
+                        { value: 'between', label: '↔ Entre', symbol: '↔' }
+                    ];
+                    
+                    if (hasExactOption) {
+                        operators.push({ value: 'exact', label: '= Exacte', symbol: '=' });
+                    }
+
+6. Ligne 1194 - Ajouter flex-wrap et modifier:
+                        .style('gap', '8px')
+                        .style('margin-bottom', '12px')
+                        .style('flex-wrap', 'wrap');
+
+7. Ligne 1204 - Ajouter max-height:
+                    const inputContainer = filterPanel.append('div')
+                        .style('display', 'none')
+                        .style('max-height', '200px')
+                        .style('overflow-y', 'auto')
+                        .style('margin-bottom', '12px');
+
+8. Ligne 1209 - Modifier le style flex:
+                            .style('flex', hasExactOption ? '0 0 48%' : '0 0 32%')
+
+9. Ligne 1233 - Ajouter box-sizing et step pour tous les inputs

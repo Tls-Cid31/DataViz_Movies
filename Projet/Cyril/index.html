@@ -28,21 +28,6 @@
     <main>
         <section id="controls">
             <div class="control-group">
-                <label>Filtrer par année :</label>
-                <div class="range-slider-container">
-                    <div class="range-track"></div>
-                    <div class="range-fill" id="rangeFill"></div>
-                    <input type="range" id="yearFilterMin" min="1900" max="2023" value="1900" class="range-slider range-min">
-                    <input type="range" id="yearFilterMax" min="1900" max="2023" value="2023" class="range-slider range-max">
-                </div>
-                <div class="range-display">
-                    <span id="yearDisplayMin">1900</span>
-                    <span> - </span>
-                    <span id="yearDisplayMax">2023</span>
-                </div>
-            </div>
-
-            <div class="control-group">
                 <label>Vue :</label>
                 <label class="radio"><input type="radio" name="mode" value="genre" checked> Par genre</label>
                 <label class="radio"><input type="radio" name="mode" value="production"> Par production</label>
@@ -55,13 +40,37 @@
                 <label class="radio"><input type="radio" name="sizeMode" value="revenue"> Revenus</label>
                 <label class="radio"><input type="radio" name="sizeMode" value="vote_average"> Notes</label>
             </div>
+
+            <div class="control-group">
+                <label>Afficher :</label>
+                <label class="radio"><input type="radio" name="topMode" value="all" checked> Tous</label>
+                <label class="radio"><input type="radio" name="topMode" value="top10"> Top 10</label>
+                <label class="radio"><input type="radio" name="topMode" value="top100"> Top 100</label>
+            </div>
+
+            <div class="control-group year-filter-wrapper">
+                <div class="year-header">
+                    <label>Filtrer par année :</label>
+                    <div class="range-display">
+                        <span id="yearDisplayMin">1900</span>
+                        <span> - </span>
+                        <span id="yearDisplayMax">2023</span>
+                    </div>
+                </div>
+                <div class="range-slider-container">
+                    <div class="range-track"></div>
+                    <div class="range-fill" id="rangeFill"></div>
+                    <input type="range" id="yearFilterMin" min="1900" max="2023" value="1900" class="range-slider range-min">
+                    <input type="range" id="yearFilterMax" min="1900" max="2023" value="2023" class="range-slider range-max">
+                </div>
+            </div>
         </section>
 
         <section id="visualizations">
             <div class="viz-container">
                 <h2>Vue Circulaire (Circle Packing)</h2>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <p class="hint" style="margin: 0;">Cliquez sur une grande bulle pour zoomer dans ses films. Cliquez au centre pour revenir.</p>
+                    <p class="hint" style="margin: 0;">Cliquez sur une grande bulle pour zoomer dans ses films. Cliquez au centre pour revenir. <span style="color: #999; font-size: 0.9em;">(Max 250 films par groupe)</span></p>
                     <div class="strict-toggle-container" style="margin: 0;">
                         <span class="toggle-label">Afficher les titres</span>
                         <label class="switch">
@@ -117,24 +126,16 @@
                         </div>
                         <div id="prodList" class="multi-list" tabindex="0"></div>
                     </div>
-                    <div class="filter-block">
-                        <label style="font-weight:600;color:#667eea;">Films :</label>
-                        <div class="search-container">
-                            <input type="text" id="filmSearch" class="filter-search" placeholder="Rechercher un film...">
-                            <button type="button" class="search-clear" id="filmSearchClear" title="Effacer la recherche">×</button>
-                        </div>
-                        <div id="filmList" class="multi-list" tabindex="0"></div>
-                        <p style="font-size:11px;color:#666;">Astuce: clic simple pour sélectionner, glisser pour sélectionner plusieurs.</p>
-                    </div>
                 </div>
                 <div class="filter-actions">
                     <button id="filtersUndo" type="button">↩ Retour</button>
+                    <button id="filtersRedo" type="button">↪ Avancer</button>
                     <button id="filtersClear" type="button">✖ Annuler les filtres</button>
                 </div>
             </div>
 
             <div class="viz-container full-span">
-                <h2>Détails</h2>
+                <h2>Détails <span id="tableFilteredCount" style="font-size: 0.8em; color: #667eea; font-weight: normal;"></span></h2>
                 <div id="dataTable"></div>
             </div>
         </section>

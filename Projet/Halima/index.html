@@ -10,8 +10,34 @@
 
   <!-- D3 -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /* Home link button */
+    .home-link {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      text-decoration: none;
+      box-shadow: 0 4px 15px rgba(102,126,234,0.4);
+      z-index: 1100;
+    }
+    .home-link:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+    .home-link svg { width: 22px; height: 22px; fill: #fff; }
+  </style>
 </head>
 <body>
+  <a href="../index.html" class="home-link" title="Retour à l'accueil" aria-label="Accueil">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 10.5l9-7 9 7V20a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4H9v4a2 2 0 0 1-2 2H3V10.5zM12 4.8l-7 5.44V20h3a1 1 0 0 0 1-1v-5h6v5a1 1 0 0 0 1 1h3V10.24L12 4.8z"></path>
+    </svg>
+  </a>
   <!-- HEADER : titre + filtres -->
   <header class="app-header">
     <div class="title-block">

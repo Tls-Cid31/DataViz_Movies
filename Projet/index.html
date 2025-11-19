@@ -2,13 +2,45 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Visualisation D3.js - Movies</title>
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DataViz Movies — Accueil</title>
+  <link rel="stylesheet" href="Cyril/CSS/style.css">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <style>
+    /* Sticky footer specific to home page */
+    .sticky-footer {
+      position: fixed;
+      left: 0;
+      bottom: 8px; /* léger espace du bas */
+      width: 100%;
+      text-align: center;
+      padding: 8px 12px;
+      background: linear-gradient(135deg, rgba(102,126,234,0.9) 0%, rgba(118,75,162,0.9) 100%);
+      color: #fff;
+      z-index: 1200;
+    }
+  </style>
 </head>
 <body>
-  <h1>Top Movies Dataset</h1>
-  <div id="chart"></div>
+  <header>
+    <h1>DataViz Movies</h1>
+    <p>Choisissez un projet pour explorer les visualisations.</p>
+  </header>
 
-  <script src="script.js"></script>
+  <main>
+    <section class="viz-container">
+      <h2>Accéder aux projets</h2>
+      <div class="filter-actions" style="gap: 16px; flex-wrap: wrap;">
+        <button type="button" onclick="window.location.href='Cyril/index.html'" aria-label="Ouvrir le projet de Cyril">Projet Cyril</button>
+        <button type="button" onclick="window.location.href='Halima/index.html'" aria-label="Ouvrir le projet de Halima">Projet Halima</button>
+        <button type="button" onclick="window.location.href='Melanie/index.html'" aria-label="Ouvrir le projet de Melanie">Projet Melanie</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="sticky-footer">
+    <p>MIAGE - M2- Projet UI - 2025</p>
+  </footer>
 </body>
 </html>

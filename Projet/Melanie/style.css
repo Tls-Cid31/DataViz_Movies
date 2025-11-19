@@ -5,6 +5,8 @@ body {
     margin: 0;
     padding: 15px;
     color: #2c3e50;
+    box-sizing: border-box; /* Avoids extra scroll from padding + 100vh */
+    overflow-x: hidden;     /* Prevents accidental horizontal scroll */
 }
 
 h2 {

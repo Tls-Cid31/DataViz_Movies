@@ -54,7 +54,7 @@ let noteOptions = []; // Liste des notes pour le filtre notes
 let filterHistory = []; // historique des sélections pour retour
 let redoHistory = []; // historique pour avancer
 // Zoom UI state
-let uiZoomScale = 1;
+let uiZoomScale = 0.4; // zoom par défaut plus éloigné
 const uiZoomMin = 0.2;
 const uiZoomMax = 3;
 const uiZoomStep = 0.1;
@@ -702,7 +702,7 @@ function renderPack(dataRoot) {
         .style('fill', d => d.children ? '#f7f7ff' : color(d.parent && d.parent.data.name || ''))
         .style('stroke', d => d.children ? '#dcdcff' : '#c9c9ff')
         .style('stroke-width', '1px')
-        .on('click', (event, d) => {
+                .on('click', (event, d) => {
             // Comportement normal : zoom
             const target = (!d.children && d.parent) ? d.parent : d;
             if (focus !== target) {
@@ -713,19 +713,25 @@ function renderPack(dataRoot) {
                 }
             }
         })
-    .append('title')
-    .text(d => {
-      if (d.children && d.depth === 1) {
-        const metric = currentSizeMode === 'budget' ? 'Budget total' : 'Popularité totale';
-        return `${d.data.name}\n${metric}: ${d3.format(',')(Math.round(d.value))}`;
-      }
-      if (!d.children && d.data) {
-        const metric = currentSizeMode === 'budget' ? 'Budget' : 'Popularité';
-        const value = currentSizeMode === 'budget' ? `$${(d.data.value / 1e6).toFixed(1)}M` : Math.round(d.data.value);
-        return `${d.data.name}\n${metric}: ${value}\nNote: ${d.data.vote_average || 'N/A'}\nAnnée: ${d.data.year || 'N/A'}`;
-      }
-      return '';
-    });
+        .append('title')
+        .text(d => {
+            // Group nodes (depth 1): show group name and films count
+            if (d.children && d.depth === 1) {
+                const filmsCount = (d.data && d.data.children) ? d.data.children.length : 0;
+                return `${d.data.name}\nFilms: ${filmsCount}`;
+            }
+            // Leaf nodes (films): show requested details
+            if (!d.children && d.data) {
+                const name = d.data.name || 'N/A';
+                const year = (d.data.year != null && d.data.year !== '') ? d.data.year : 'N/A';
+                const popularity = (isFinite(d.data.popularity)) ? d3.format(',.0f')(d.data.popularity) : 'N/A';
+                const budget = (isFinite(d.data.budget) && d.data.budget > 0) ? `$${d3.format(',.1f')(d.data.budget / 1e6)}M` : 'N/A';
+                const revenue = (isFinite(d.data.revenue) && d.data.revenue > 0) ? `$${d3.format(',.1f')(d.data.revenue / 1e6)}M` : 'N/A';
+                const note = (isFinite(d.data.vote_average)) ? (+d.data.vote_average).toFixed(1) : 'N/A';
+                return `Films: ${name}\nAnnees: ${year}\nPopularité: ${popularity}\nBudget: ${budget}\nRevenus: ${revenue}\nNotes: ${note}`;
+            }
+            return '';
+        });
     
     const label = svg.append('g')
         .attr('pointer-events', 'none')
